@@ -1,0 +1,8 @@
+name: astrbot_plugin_hitwh_info
+desc: HITWH 校园信息层级检索插件，统一原子事实表 + pgvector 语义搜索。
+help: |
+  /hitwh_sync 同步官网、QQ群、QQ频道配置数据。
+  LLM Tool: search_school_info(query, scope="auto")。
+version: v0.1.0
+author: hx
+repo: ""
