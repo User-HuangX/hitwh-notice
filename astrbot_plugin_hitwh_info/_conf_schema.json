@@ -9,28 +9,63 @@
     "type": "string",
     "default": ""
   },
+  "token": {
+    "description": "本科教育网登录后的 Cookie/Token，用于抓取需要登录才能看到的内容。",
+    "type": "string",
+    "default": "",
+    "hint": "浏览器登录教务网后，F12 -> Network -> 复制 Cookie 粘贴过来"
+  },
   "website_urls": {
     "description": "需要同步的 HITWH 官网 URL 列表。",
     "type": "list",
-    "items": {"type": "string"},
-    "default": ["https://www.hitwh.edu.cn/", "https://today.hitwh.edu.cn/"]
+    "items": {
+      "type": "string"
+    },
+    "default": [
+      "https://www.hitwh.edu.cn/",
+      "https://today.hitwh.edu.cn/"
+    ]
+  },
+  "education_urls": {
+    "description": "需要同步的本科教育网 URL 列表（需要 token 才能访问）。",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [
+      "http://jwts.hitwh.edu.cn/cjcx/queryCjpub",
+      "http://jwts.hitwh.edu.cn/cjcx/queryQmcj",
+      "http://jwts.hitwh.edu.cn/pubtzgg/queryTzggByMxxs"
+    ]
   },
   "colleges": {
     "description": "可选院系列表；为空时使用内置 HITWH 常见学院并从网页正文补充。",
     "type": "list",
-    "items": {"type": "string"},
+    "items": {
+      "type": "string"
+    },
     "default": []
   },
   "qq_groups": {
     "description": "QQ群元数据列表。可由外部平台适配器替换；当前配置模式用于静态同步。",
     "type": "list",
-    "items": {"type": "object"},
+    "items": {
+      "type": "object"
+    },
     "default": []
   },
   "qq_channels": {
     "description": "QQ频道元数据列表。字段示例：guild_id、guild_name、channels。",
     "type": "list",
-    "items": {"type": "object"},
+    "items": {
+      "type": "object"
+    },
     "default": []
+  },
+  "sync_interval_hours": {
+    "description": "自动同步间隔（小时），设为0关闭自动同步",
+    "type": "int",
+    "default": 1,
+    "hint": "每N小时自动跑一次 /hitwh_sync"
   }
 }
