@@ -56,6 +56,7 @@ class HitwhInfoPlugin(Star):
         super().__init__(context, config)
         self.config = config or {}
         self.db = HitwhDB(self.config.get("postgres_dsn"))
+        self._last_index_time = datetime.utcnow() + timedelta(hours=8)
         logger.info("hitwh_init dsn=%s", self.config.get("postgres_dsn", "")[:50])
         self.hierarchy = HierarchyMatcher(self.db)
         self._embedder = Embedder(
@@ -119,9 +120,19 @@ class HitwhInfoPlugin(Star):
             asyncio.ensure_future(self._timer("schedule", self._sync_schedule, interval_h)),
             asyncio.ensure_future(self._timer("exams", self._sync_exams, interval_h)),
             asyncio.ensure_future(self._timer("plan", self._sync_plan, interval_h)),
-            asyncio.ensure_future(self._timer("index_qq", self._index_qq_messages, interval_h)),
+            asyncio.ensure_future(self._index_timer(5)),
         ]
         logger.info("auto_sync_started interval_hours=%s modules=5", interval_h)
+
+    async def _index_timer(self, interval_minutes: int) -> None:
+        await asyncio.sleep(5)
+        while True:
+            try:
+                count = await self._index_qq_messages()
+                logger.info("index_qq count=%s", count)
+            except Exception:
+                logger.exception("index_qq_failed")
+            await asyncio.sleep(interval_minutes * 60)
 
     async def _timer(self, name: str, sync_fn, interval_hours: int) -> None:
         await asyncio.sleep(5 + hash(name) % 30)
@@ -378,7 +389,9 @@ class HitwhInfoPlugin(Star):
         if self.db is None: return 0
         from .fact_splitter import FactSplitter
         splitter = FactSplitter(min_length=15)
-        msgs = await self.db.query_qq_messages(limit=200)
+        since = self._last_index_time
+        msgs = await self.db.query_qq_messages_since(since, limit=200)
+        if not msgs: return 0
         total = 0
         for msg in msgs:
             text = msg.get("content", "")
@@ -389,13 +402,16 @@ class HitwhInfoPlugin(Star):
             for c in chunks:
                 embedding = await self._embedder.embed(c)
                 chunk_data.append({"content": c, "embedding": embedding})
+            who = msg.get("nickname", "") or str(msg.get("user_id", ""))
+            where = str(msg.get("group_id", ""))
+            title = f"QQ-{who}@{where}"
             await self.db.upsert_document(
-                title=f"QQ-{msg.get('nickname','') or msg.get('user_id','')}",
-                content=text, source_type="qq_group_msg",
-                source_name=str(msg.get("group_id", "")),
-                chunks_data=chunk_data,
+                title=title, content=text, source_type="qq_group_msg",
+                source_name=where, chunks_data=chunk_data,
             )
             total += 1
+        if msgs:
+            self._last_index_time = datetime.utcnow() + timedelta(hours=8)
         return total
 
     async def _index_knowledge(self) -> int:
