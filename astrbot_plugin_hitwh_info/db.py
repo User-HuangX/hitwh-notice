@@ -11,6 +11,7 @@ from sqlalchemy import (
     Index,
     String,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy import select, update
@@ -569,16 +570,20 @@ class HitwhDB:
             await session.flush()
 
             doc_id = doc.id
-            for i, cd in enumerate(chunks_data):
-                stmt = (
-                    pg_insert(Chunk)
-                    .values(
-                        document_id=doc_id, chunk_index=i,
-                        content=cd["content"], embedding=cd.get("embedding", []),
-                    )
-                    .on_conflict_do_nothing(constraint="idx_chunk_doc_content")
+            hashes = [hashlib.md5(cd["content"].encode()).hexdigest() for cd in chunks_data]
+            existing = set()
+            if hashes:
+                rows = await session.execute(
+                    select(func.md5(Chunk.content)).where(func.md5(Chunk.content).in_(hashes))
                 )
-                await session.execute(stmt)
+                existing = {row[0] for row in rows.all()}
+            for i, cd in enumerate(chunks_data):
+                if hashes[i] in existing:
+                    continue
+                session.add(Chunk(
+                    document_id=doc_id, chunk_index=i,
+                    content=cd["content"], embedding=cd.get("embedding", []),
+                ))
             logger.info("doc_upserted id=%s title=%s chunks=%s", doc_id, title[:40], len(chunks_data))
             return doc_id
 
