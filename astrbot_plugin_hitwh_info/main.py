@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from ._utils import extract_msg, strip_command_prefix
@@ -553,7 +553,7 @@ class HitwhInfoPlugin(Star):
                 user_id=str(event.get_sender_id() or ""),
                 nickname=str(event.get_sender_name() or ""),
                 content=content,
-                message_time=datetime.now(timezone.utc),
+                message_time=datetime.utcnow(),
             )
             user_id = str(event.get_sender_id() or "")
             index_coro = self._auto_index_message(user_id, content)
