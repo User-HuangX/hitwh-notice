@@ -119,7 +119,7 @@ class HitwhInfoPlugin(Star):
             asyncio.ensure_future(self._timer("schedule", self._sync_schedule, interval_h)),
             asyncio.ensure_future(self._timer("exams", self._sync_exams, interval_h)),
             asyncio.ensure_future(self._timer("plan", self._sync_plan, interval_h)),
-            asyncio.ensure_future(self._timer("index", self._index_knowledge, interval_h)),
+            asyncio.ensure_future(self._timer("index_qq", self._index_qq_messages, interval_h)),
         ]
         logger.info("auto_sync_started interval_hours=%s modules=5", interval_h)
 
@@ -374,7 +374,32 @@ class HitwhInfoPlugin(Star):
             logger.exception("index_failed")
             yield event.plain_result("⚠️ 索引失败")
 
+    async def _index_qq_messages(self) -> int:
+        if self.db is None: return 0
+        from .fact_splitter import FactSplitter
+        splitter = FactSplitter(min_length=15)
+        msgs = await self.db.query_qq_messages(limit=200)
+        total = 0
+        for msg in msgs:
+            text = msg.get("content", "")
+            if not text: continue
+            chunks = await splitter.split(text)
+            if not chunks: continue
+            chunk_data = []
+            for c in chunks:
+                embedding = await self._embedder.embed(c)
+                chunk_data.append({"content": c, "embedding": embedding})
+            await self.db.upsert_document(
+                title=f"QQ-{msg.get('nickname','') or msg.get('user_id','')}",
+                content=text, source_type="qq_group_msg",
+                source_name=str(msg.get("group_id", "")),
+                chunks_data=chunk_data,
+            )
+            total += 1
+        return total
+
     async def _index_knowledge(self) -> int:
+        """手动 /索引 - 索引教务数据到知识库"""
         if self.db is None: return 0
         from .fact_splitter import FactSplitter
         splitter = FactSplitter(min_length=20)
@@ -395,7 +420,7 @@ class HitwhInfoPlugin(Star):
                 for c in chunks:
                     embedding = await self._embedder.embed(c)
                     chunk_data.append({"content": c, "embedding": embedding})
-                doc_id = await self.db.upsert_document(
+                await self.db.upsert_document(
                     title=row.get("course_name", row.get("semester", "")),
                     content=text, source_type=source_type,
                     source_name=row.get("course_name", row.get("semester", "")),
