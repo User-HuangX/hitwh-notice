@@ -583,32 +583,35 @@ class HitwhDB:
 
     async def upsert_document(self, title: str, content: str, source_type: str,
                               source_name: str, chunks_data: list[dict[str, Any]]) -> int:
+        if not chunks_data:
+            return 0
         async with await self._session() as session, session.begin():
+            hashes = [hashlib.md5(cd["content"].encode()).hexdigest() for cd in chunks_data]
+            existing = set()
+            rows = await session.execute(
+                select(func.md5(Chunk.content)).where(func.md5(Chunk.content).in_(hashes))
+            )
+            existing = {row[0] for row in rows.all()}
+            
+            new_chunks = [(i, cd) for i, cd in enumerate(chunks_data) if hashes[i] not in existing]
+            if not new_chunks:
+                return 0
+            
             doc = Document(
                 title=title, content=content,
                 source_type=source_type, source_name=source_name,
-                chunk_count=len(chunks_data),
+                chunk_count=len(new_chunks),
             )
             session.add(doc)
             await session.flush()
-
-            doc_id = doc.id
-            hashes = [hashlib.md5(cd["content"].encode()).hexdigest() for cd in chunks_data]
-            existing = set()
-            if hashes:
-                rows = await session.execute(
-                    select(func.md5(Chunk.content)).where(func.md5(Chunk.content).in_(hashes))
-                )
-                existing = {row[0] for row in rows.all()}
-            for i, cd in enumerate(chunks_data):
-                if hashes[i] in existing:
-                    continue
+            
+            for i, cd in new_chunks:
                 session.add(Chunk(
-                    document_id=doc_id, chunk_index=i,
+                    document_id=doc.id, chunk_index=i,
                     content=cd["content"], embedding=cd.get("embedding", []),
                 ))
-            logger.info("doc_upserted id=%s title=%s chunks=%s", doc_id, title[:40], len(chunks_data))
-            return doc_id
+            logger.info("doc_upserted id=%s title=%s chunks=%s", doc.id, title[:40], len(new_chunks))
+            return doc.id
 
     @with_conn
     async def search_chunks(self, conn, embedding: list[float], min_similarity: float = 0.3) -> list[dict[str, Any]]:
