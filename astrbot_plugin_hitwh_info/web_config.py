@@ -12,9 +12,15 @@ import aiohttp.web as web
 
 logger = logging.getLogger(__name__)
 
+try:
+    from astrbot.core.utils.astrbot_path import get_astrbot_config_path
+    _config_base = Path(get_astrbot_config_path())
+except Exception:
+    _config_base = Path("/home/hx/AstrBot/data/config")
+
 CONFIG_PATHS = [
-    "/home/hx/Astrbot/data/config/astrbot_plugin_hitwh_info_config.json",
-    "/home/hx/Astrbot/data/config/astrbot_plugin_hitwh_info.json",
+    str(_config_base / "astrbot_plugin_hitwh_info_config.json"),
+    str(_config_base / "astrbot_plugin_hitwh_info.json"),
 ]
 
 DEPRECATED_CONFIG_KEYS = {
