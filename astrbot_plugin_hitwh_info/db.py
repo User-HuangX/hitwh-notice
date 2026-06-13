@@ -571,14 +571,6 @@ class HitwhDB:
             )
         return [dict(row) for row in rows]
 
-    @with_conn
-    async def query_qq_messages_since(self, conn, since: datetime, limit: int = 200) -> list[dict[str, Any]]:
-        rows = await conn.fetch(
-            "SELECT * FROM hitwh_qq_messages WHERE created_at > $1 ORDER BY created_at ASC LIMIT $2",
-            since, limit,
-        )
-        return [dict(row) for row in rows]
-
     # ======== documents & chunks ========
 
     async def upsert_document(self, title: str, content: str, source_type: str,

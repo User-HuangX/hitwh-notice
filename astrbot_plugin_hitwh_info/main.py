@@ -56,7 +56,6 @@ class HitwhInfoPlugin(Star):
         super().__init__(context, config)
         self.config = config or {}
         self.db = HitwhDB(self.config.get("postgres_dsn"))
-        self._last_index_time = datetime.utcnow() + timedelta(hours=8)
         logger.info("hitwh_init dsn=%s", self.config.get("postgres_dsn", "")[:50])
         self.hierarchy = HierarchyMatcher(self.db)
         self._embedder = Embedder(
@@ -122,18 +121,6 @@ class HitwhInfoPlugin(Star):
                 asyncio.ensure_future(self._timer("plan", self._sync_plan, interval_h)),
             ]
             logger.info("edu_sync_started interval_hours=%s modules=4", interval_h)
-        self._tasks.append(asyncio.ensure_future(self._index_timer(5)))
-        logger.info("index_timer_started interval_minutes=5")
-
-    async def _index_timer(self, interval_minutes: int) -> None:
-        await asyncio.sleep(5)
-        while True:
-            try:
-                count = await self._index_qq_messages()
-                logger.info("index_qq count=%s", count)
-            except Exception:
-                logger.exception("index_qq_failed")
-            await asyncio.sleep(interval_minutes * 60)
 
     async def _timer(self, name: str, sync_fn, interval_hours: int) -> None:
         await asyncio.sleep(5 + hash(name) % 30)
@@ -386,34 +373,23 @@ class HitwhInfoPlugin(Star):
             logger.exception("index_failed")
             yield event.plain_result("⚠️ 索引失败")
 
-    async def _index_qq_messages(self) -> int:
-        if self.db is None: return 0
-        from .fact_splitter import FactSplitter
-        splitter = FactSplitter(min_length=15)
-        since = self._last_index_time
-        msgs = await self.db.query_qq_messages_since(since, limit=200)
-        if not msgs: return 0
-        total = 0
-        for msg in msgs:
-            text = msg.get("content", "")
-            if not text: continue
-            chunks = await splitter.split(text)
-            if not chunks: continue
-            chunk_data = []
-            for c in chunks:
-                embedding = await self._embedder.embed(c)
-                chunk_data.append({"content": c, "embedding": embedding})
-            who = msg.get("nickname", "") or str(msg.get("user_id", ""))
-            where = str(msg.get("group_id", ""))
-            title = f"QQ-{who}@{where}"
+    async def _embed_on_message(self, text: str, event) -> None:
+        """收到消息时直接嵌入入库"""
+        if self.db is None or not text.strip():
+            return
+        try:
+            embedding = await self._embedder.embed(text)
+            who = str(event.get_sender_name() or "") or str(event.get_sender_id() or "")
+            where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
             await self.db.upsert_document(
-                title=title, content=text, source_type="qq_group_msg",
-                source_name=where, chunks_data=chunk_data,
+                title=f"QQ-{who}@{where}",
+                content=text,
+                source_type="qq_group_msg",
+                source_name=where,
+                chunks_data=[{"content": text, "embedding": embedding}],
             )
-            total += 1
-        if msgs:
-            self._last_index_time = datetime.utcnow() + timedelta(hours=8)
-        return total
+        except Exception:
+            logger.exception("embed_on_message_failed")
 
     async def _index_knowledge(self) -> int:
         """手动 /索引 - 索引教务数据到知识库"""
@@ -617,28 +593,10 @@ class HitwhInfoPlugin(Star):
             )
         except Exception:
             logger.exception("qq_msg_insert_failed")
+        asyncio.ensure_future(self._embed_on_message(content, event))
 
     async def _on_group_message(self, event: Any = None):
         await self._on_message(event)
-
-    async def _auto_index_message(self, user_id: str, content: str) -> None:
-        if self.db is None: return
-        from .fact_splitter import FactSplitter
-        splitter = FactSplitter(min_length=15)
-        chunks = await splitter.split(content)
-        if not chunks: return
-        chunk_data = []
-        for c in chunks:
-            embedding = await self._embedder.embed(c)
-            chunk_data.append({"content": c, "embedding": embedding})
-        try:
-            await self.db.upsert_document(
-                title=f"QQ消息-{user_id}", content=content,
-                source_type="qq_group_msg", source_name=user_id,
-                chunks_data=chunk_data,
-            )
-        except Exception:
-            logger.exception("auto_index_msg_failed")
 
     @filter.on_decorating_result()
     async def _on_llm_context(self, event: Any = None):
