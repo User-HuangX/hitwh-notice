@@ -181,16 +181,17 @@ class HitwhInfoPlugin(Star):
     async def cmd_grades(self, event: Any = None):
         '''查询历年成绩。支持课程名关键词过滤，如 /成绩 微积分。返回学期、课程名、分数、及格状态。'''
         keyword = strip_command_prefix(extract_msg(event), ["/成绩", "成绩"])
-        token = self.config.get("token", "")
-        if not token:
-            yield event.plain_result("⚠️ 未配置教务网token，发 /set_token 设置"); return
-        yield event.plain_result("正在拉取最新成绩...")
-        try:
-            await self._sync_grades()
-        except Exception as e:
-            logger.exception("grades_sync_failed")
-            yield event.plain_result(f"⚠️ 成绩拉取失败：{e}"); return
-        grades = await self.db.query_grades(keyword) if self.db else []
+        if self.db is None:
+            yield event.plain_result("⚠️ 数据库不可用"); return
+        grades = await self.db.query_grades(keyword)
+        if not grades and self._has_edu_config():
+            yield event.plain_result("首次查询，正在拉取成绩...")
+            try:
+                await self._sync_grades()
+            except Exception as e:
+                logger.exception("grades_sync_failed")
+                yield event.plain_result(f"⚠️ 成绩拉取失败：{e}"); return
+            grades = await self.db.query_grades(keyword)
         if not grades:
             yield event.plain_result("⚠️ 没查到成绩"); return
         semesters: dict[str, list] = {}
@@ -214,12 +215,13 @@ class HitwhInfoPlugin(Star):
     @filter.command("课程", desc="查询本学期个人课表")
     async def cmd_schedule(self, event: Any = None):
         '''查询本学期个人课表。返回每周每天每节课的上课安排，包括教师、周次、教室。'''
-        token = self.config.get("token", "")
-        if not token:
-            yield event.plain_result("⚠️ 未配置教务网token，发 /set_token 设置"); return
-        yield event.plain_result("正在拉取课表...")
-        await self._sync_schedule()
-        schedules = await self.db.query_schedules() if self.db else []
+        if self.db is None:
+            yield event.plain_result("⚠️ 数据库不可用"); return
+        schedules = await self.db.query_schedules()
+        if not schedules and self._has_edu_config():
+            yield event.plain_result("首次查询，正在拉取课表...")
+            await self._sync_schedule()
+            schedules = await self.db.query_schedules()
         if not schedules:
             yield event.plain_result("⚠️ 没查到课程"); return
         days = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -231,12 +233,13 @@ class HitwhInfoPlugin(Star):
 
     @filter.command("考试", desc="查询考试安排，返回考试时间、地点、座位号。例如：/考试")
     async def cmd_exams(self, event: Any = None):
-        token = self.config.get("token", "")
-        if not token:
-            yield event.plain_result("⚠️ 未配置教务网token，发 /set_token 设置"); return
-        yield event.plain_result("正在拉取考试安排...")
-        await self._sync_exams()
-        exams = await self.db.query_exams() if self.db else []
+        if self.db is None:
+            yield event.plain_result("⚠️ 数据库不可用"); return
+        exams = await self.db.query_exams()
+        if not exams and self._has_edu_config():
+            yield event.plain_result("首次查询，正在拉取考试安排...")
+            await self._sync_exams()
+            exams = await self.db.query_exams()
         if not exams:
             yield event.plain_result("⚠️ 没查到考试安排"); return
         lines = [f"📝 考试安排（共{len(exams)}门）："]
@@ -250,14 +253,13 @@ class HitwhInfoPlugin(Star):
     @filter.command("教学计划", desc="查询专业培养方案/教学计划，可选课程名过滤。例如：/教学计划 数据结构")
     async def cmd_plan(self, event: Any = None):
         keyword = strip_command_prefix(extract_msg(event), ["/计划", "计划"])
-        token = self.config.get("token", "")
-        if not token:
-            yield event.plain_result("⚠️ 未配置教务网token，发 /set_token 设置"); return
-        yield event.plain_result("正在拉取培养方案...")
-        count = await self._sync_plan()
-        if count <= 0:
-            yield event.plain_result("⚠️ 拉取失败，检查token"); return
-        plans = await self.db.query_plan(keyword) if self.db else []
+        if self.db is None:
+            yield event.plain_result("⚠️ 数据库不可用"); return
+        plans = await self.db.query_plan(keyword)
+        if not plans and self._has_edu_config():
+            yield event.plain_result("首次查询，正在拉取培养方案...")
+            await self._sync_plan()
+            plans = await self.db.query_plan(keyword)
         if not plans:
             yield event.plain_result("⚠️ 没查到培养方案"); return
         lines = [f"📘 培养方案（共{len(plans)}门）："]
@@ -273,6 +275,21 @@ class HitwhInfoPlugin(Star):
         self.config["token"] = msg
         save_plugin_config(self.config, self.config.get("webvpn_base", ""), msg)
         yield event.plain_result("✅ 教务网token已更新！试试发 /成绩 /课程 /考试")
+
+    @filter.command("同步", desc="强制从教务网拉取最新数据（成绩/课表/考试/培养方案）")
+    async def cmd_sync(self, event: Any = None):
+        if not self._has_edu_config():
+            yield event.plain_result("⚠️ 未配置教务网token或WebVPN地址"); return
+        yield event.plain_result("🔄 正在同步教务数据...")
+        results = []
+        for name, fn in [("成绩", self._sync_grades), ("课表", self._sync_schedule),
+                          ("考试", self._sync_exams), ("培养方案", self._sync_plan)]:
+            try:
+                n = await fn()
+                results.append(f"{name}: {n}条")
+            except Exception as e:
+                results.append(f"{name}: 失败({e})")
+        yield event.plain_result("📊 同步完成\n" + "\n".join(results))
 
     @filter.command("hitwh", desc="显示插件帮助信息和所有可用命令")
     async def cmd_help(self, event: Any = None):
