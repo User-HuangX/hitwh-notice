@@ -408,8 +408,8 @@ class HitwhInfoPlugin(Star):
             yield event.plain_result("⚠️ 索引失败")
 
     async def _embed_on_message(self, text: str, event) -> None:
-        """收到消息时直接嵌入入库"""
-        if self.db is None or not text.strip():
+        """收到消息时直接嵌入入库，跳过太短的消息"""
+        if self.db is None or len(text.strip()) < 4:
             return
         try:
             embedding = await self._embedder.embed(text)

@@ -652,22 +652,10 @@ class HitwhDB:
     async def search_chunks(
         self, conn,
         embedding: list[float],
-        min_similarity: float = 0.3,
+        min_similarity: float = 0.5,
         source_types: list[str] | None = None,
         top_k: int = 50,
     ) -> list[dict[str, Any]]:
-        """向量相似度搜索，支持 per-source 预过滤和 Top-K 控制。
-
-        Args:
-            conn: asyncpg 连接
-            embedding: 查询嵌入向量 (1024 维)
-            min_similarity: 最小余弦相似度阈值
-            source_types: 可选，限制搜索的 source_type 列表
-            top_k: 最大返回候选数量
-
-        Returns:
-            搜索结果列表，每项包含 chunk 和 document 字段
-        """
         vec = RawVector(embedding) if RawVector else embedding
         source_filter = ""
         params: list[Any] = [vec, min_similarity]
@@ -698,25 +686,11 @@ class HitwhDB:
         self, conn,
         embedding: list[float],
         query_text: str,
-        min_similarity: float = 0.3,
+        min_similarity: float = 0.5,
         source_types: list[str] | None = None,
         top_k: int = 50,
         rrf_k: int = 60,
     ) -> list[dict[str, Any]]:
-        """混合检索：dense (向量) + sparse (全文搜索) 使用 RRF 融合。
-
-        Args:
-            conn: asyncpg 连接
-            embedding: 查询嵌入向量 (1024 维)
-            query_text: 查询文本（用于全文搜索）
-            min_similarity: 最小向量余弦相似度阈值
-            source_types: 可选，限制搜索的 source_type 列表
-            top_k: 最大返回候选数量
-            rrf_k: RRF 融合参数 k (默认 60)
-
-        Returns:
-            按 RRF 分数降序排列的搜索结果列表
-        """
         vec = RawVector(embedding) if RawVector else embedding
 
         source_where = ""
@@ -726,10 +700,6 @@ class HitwhDB:
             source_where = f"AND d.source_type IN ({placeholders})"
             source_params = list(source_types)
 
-        # RRF 融合查询：
-        # 1) dense_ranked: 向量余弦距离排序（top_k * 2 候选）
-        # 2) sparse_ranked: ts_rank 排序（top_k * 2 候选）
-        # 3) 合并后用 RRF 公式重排
         query = f"""
             WITH dense_ranked AS (
                 SELECT c.id, c.content, c.document_id, c.chunk_index, c.embedding,
@@ -770,11 +740,10 @@ class HitwhDB:
             LIMIT $3
         """
 
-        limit_val = top_k * 2  # 每路取 2 倍候选
+        limit_val = top_k * 2
         params: list[Any] = [vec, min_similarity, limit_val, query_text, rrf_k] + source_params
 
         rows = await conn.fetch(query, *params)
-        return [dict(row) for row in rows]
 
     @with_conn
     async def count_records(self, conn) -> dict[str, int]:
