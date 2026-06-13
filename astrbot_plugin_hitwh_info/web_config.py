@@ -287,7 +287,11 @@ async def _capture_cookie(webvpn_base: str, timeout: int = 120) -> str:
 
         await asyncio.sleep(2)
         cookies = await context.cookies()
-        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies if c.get("value"))
+        _skip_names = {"name", "value", "domain", "path", "expires"}
+        cookie_str = "; ".join(
+            f"{c['name']}={c['value']}" for c in cookies
+            if c.get("value") and c.get("name", "").lower() not in _skip_names
+        )
         await browser.close()
 
         if len(cookie_str) < 20:
@@ -327,9 +331,12 @@ def _save_config(webvpn_base: str, token: str) -> None:
         p = Path(path_str)
         if p.exists():
             try:
-                data = json.loads(p.read_text())
+                raw = p.read_bytes()
+                if raw.startswith(b"\xef\xbb\xbf"):
+                    raw = raw[3:]
+                data = json.loads(raw.decode("utf-8"))
                 data = _normalize_config_data(data, webvpn_base, token)
-                p.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+                p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
                 logger.info("config_saved path=%s", p)
             except Exception:
                 logger.exception("config_save_failed path=%s", p)

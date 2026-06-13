@@ -424,7 +424,7 @@ class HitwhInfoPlugin(Star):
     # ========== LLM Tools ==========
 
     @filter.llm_tool(name="hitwh_search", desc="语义搜索HITWH校园信息知识库。每次对话自动调用。")
-    async def tool_search(self, query: str) -> str:
+    async def tool_search(self, event, query: str) -> str:
         """语义搜索 HITWH 校园信息知识库，适合查询通知、成绩、课表、考试、培养方案等综合问题。
 
         Args:
@@ -450,7 +450,7 @@ class HitwhInfoPlugin(Star):
         )
 
     @filter.llm_tool(name="hitwh_grades", desc="精确查询HITWH学生成绩。输入课程名关键词(如'微积分'、'英语')或留空查全部。返回学期、课程名、分数、课程性质。用于查询具体课程成绩、挂科情况等。")
-    async def tool_grades(self, keyword: str = "") -> str:
+    async def tool_grades(self, event, keyword: str = "") -> str:
         """从数据库精确查询 HITWH 学生成绩，适合回答某门课多少分、是否挂科、历年成绩等问题。
 
         Args:
@@ -469,7 +469,7 @@ class HitwhInfoPlugin(Star):
         return "\n".join(lines)
 
     @filter.llm_tool(name="hitwh_schedule", desc="查询HITWH本学期个人课表。输入课程名或教师名关键词过滤(如'电磁场'、'周洪娟')或留空查全部。返回星期几、第几节、课程详情(含教师、周次、教室)。用于查询某天有什么课、某门课的上课时间地点等。")
-    async def tool_schedule(self, query: str = "") -> str:
+    async def tool_schedule(self, event, query: str = "") -> str:
         """从数据库查询 HITWH 本学期个人课表，适合回答今天/某天有什么课、课程时间地点等问题。
 
         Args:
@@ -490,7 +490,7 @@ class HitwhInfoPlugin(Star):
         return "\n".join(lines) if lines else "未找到匹配课程"
 
     @filter.llm_tool(name="hitwh_exams", desc="查询HITWH考试安排。输入课程名关键词过滤或留空查全部。返回课程名、考试时间、考试地点、座位号。用于查询某门课何时考试、在哪个教室、最近有哪些考试等。")
-    async def tool_exams(self, query: str = "") -> str:
+    async def tool_exams(self, event, query: str = "") -> str:
         """从数据库查询 HITWH 考试安排，适合回答考试时间、地点、座位号、最近考试等问题。
 
         Args:
@@ -509,7 +509,7 @@ class HitwhInfoPlugin(Star):
         return "\n".join(lines) if lines else "未找到匹配考试"
 
     @filter.llm_tool(name="hitwh_plan", desc="查询HITWH专业培养方案/教学计划。输入课程名关键词过滤或留空查全部。返回开课学年学期、课程名、学分。用于查询培养方案中有哪些课、某门课多少学分、某学期有哪些课等。")
-    async def tool_plan(self, keyword: str = "") -> str:
+    async def tool_plan(self, event, keyword: str = "") -> str:
         """从数据库查询 HITWH 专业培养方案/教学计划，适合回答课程学分、开课学期、培养方案课程等问题。
 
         Args:
