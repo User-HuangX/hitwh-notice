@@ -412,21 +412,19 @@ class HitwhInfoPlugin(Star):
             yield event.plain_result("⚠️ 索引失败")
 
     async def _embed_on_message(self, text: str, event) -> None:
-        """缓冲 + 异同检测：同群同人连续消息合并嵌入，换人或时间隔断则 flush"""
+        """缓冲 + 时间异同检测：同群消息按时序合并，时间断层 >30s 或 >300 字则 flush"""
         if self.db is None or len(text.strip()) < 2:
             return
         where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
-        sender = str(event.get_sender_id() or "")
         now = datetime.utcnow() + timedelta(hours=8)
         buf = self._bufs.get(where)
-        # 判断是否需要 flush：换人 ｜ 时间断层 >30s ｜ 长度溢出
         if buf is not None:
             gap = (now - buf["last_time"]).total_seconds()
-            if buf["sender"] != sender or gap > 30 or buf["chars"] + len(text) > 300:
+            if gap > 30 or buf["chars"] + len(text) > 300:
                 await self._flush_buffer(where, buf)
                 buf = None
         if buf is None:
-            buf = {"lines": [], "sender": sender, "last_time": now, "chars": 0}
+            buf = {"lines": [], "last_time": now, "chars": 0}
             self._bufs[where] = buf
         buf["lines"].append(text)
         buf["chars"] += len(text)
