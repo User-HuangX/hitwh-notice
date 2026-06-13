@@ -26,9 +26,11 @@ from sqlalchemy.orm import (
 
 try:
     from pgvector.sqlalchemy import Vector
+    from pgvector import Vector as RawVector
     _pgvector_available = True
 except ImportError:
     Vector = None
+    RawVector = None
     _pgvector_available = False
 
 try:
@@ -241,8 +243,17 @@ class HitwhDB:
                 if raw.startswith(prefix):
                     raw = raw[len(prefix):]
                     break
+            try:
+                from pgvector.asyncpg import register_vector
+            except ImportError:
+                register_vector = None
+
+            async def _init(conn):
+                if register_vector is not None:
+                    await register_vector(conn)
+
             self._pool = await asyncpg.create_pool(
-                f"postgresql://{raw}", min_size=1, max_size=5
+                f"postgresql://{raw}", min_size=1, max_size=5, init=_init
             )
         return self._pool
 
@@ -589,6 +600,7 @@ class HitwhDB:
 
     @with_conn
     async def search_chunks(self, conn, embedding: list[float], min_similarity: float = 0.3) -> list[dict[str, Any]]:
+        vec = RawVector(embedding) if RawVector else embedding
         rows = await conn.fetch(
             """SELECT c.id, c.content, c.document_id, c.chunk_index,
                       d.title, d.content AS doc_content, d.source_type, d.source_name,
@@ -597,7 +609,7 @@ class HitwhDB:
                JOIN hitwh_documents d ON c.document_id = d.id
                WHERE 1 - (c.embedding <=> $1) > $2
                ORDER BY c.embedding <=> $1""",
-            embedding, min_similarity,
+            vec, min_similarity,
         )
         return [dict(row) for row in rows]
 
