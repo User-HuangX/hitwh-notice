@@ -91,6 +91,7 @@ uv tool run --from playwright playwright install chromium
   "webvpn_base": "http://jwts-hitwh-edu-cn.ivpn.hitwh.edu.cn:8118",
   "sync_interval_hours": 1,
   "group_whitelist": [],
+  "colleges": [],
   "embedding_api_base": "https://api.siliconflow.cn/v1",
   "embedding_api_key": "sk-你的key",
   "embedding_model": "BAAI/bge-large-zh-v1.5",
@@ -105,6 +106,8 @@ uv tool run --from playwright playwright install chromium
 
 **配置教务 Cookie：** 打开 `http://localhost:8888` → 点击「启动浏览器登录捕获」→ 在弹出的浏览器中登录 IVPN → Cookie 自动保存。
 
+教务抓取接口路径已在代码中固定，包括成绩、课表、考试、培养方案；配置文件不再提供 `education_urls` 之类的 URL 列表。
+
 ### 配置项说明
 
 | 配置项 | 说明 | 默认值 |
@@ -114,9 +117,11 @@ uv tool run --from playwright playwright install chromium
 | `webvpn_base` | IVPN/WebVPN 教务地址 | - |
 | `sync_interval_hours` | 数据自动同步间隔（小时） | 1 |
 | `group_whitelist` | QQ 群消息白名单（群号列表） | `[]`（不采集） |
+| `colleges` | 可选院系列表；为空时使用内置学院列表 | `[]` |
 | `embedding_api_base` | 嵌入模型 API 地址 | - |
 | `embedding_api_key` | 嵌入模型 API Key | - |
 | `embedding_model` | 嵌入模型名称 | - |
+| `embedding_dim` | 嵌入向量维度 | 1024 |
 | `rerank_api_base` | 重排模型 API 地址 | - |
 | `rerank_api_key` | 重排模型 API Key | - |
 | `rerank_model` | 重排模型名称 | - |

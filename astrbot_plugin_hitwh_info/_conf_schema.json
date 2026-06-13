@@ -4,11 +4,6 @@
     "type": "string",
     "default": ""
   },
-  "my_class": {
-    "description": "用户班级，用于 my_class/my_college/auto scope 的锚点，例如 计科2101。",
-    "type": "string",
-    "default": ""
-  },
   "token": {
     "description": "本科教育网 Cookie/Token。公网直连填 jwts.hitwh.edu.cn 的 Cookie；WebVPN 模式填 VPN Cookie。",
     "type": "string",
@@ -21,50 +16,11 @@
     "default": "",
     "hint": "例如 https://webvpn.hitwh.edu.cn/http/77726476706e69737468656265737421fae0558f693861446900c7a99c406d3667"
   },
-  "website_urls": {
-    "description": "需要同步的 HITWH 官网 URL 列表。",
-    "type": "list",
-    "items": {
-      "type": "string"
-    },
-    "default": [
-      "https://www.hitwh.edu.cn/",
-      "https://today.hitwh.edu.cn/"
-    ]
-  },
-  "education_urls": {
-    "description": "需要同步的本科教育网 URL 列表（需要 token 才能访问）。",
-    "type": "list",
-    "items": {
-      "type": "string"
-    },
-    "default": [
-      "http://jwts.hitwh.edu.cn/cjcx/queryCjpub",
-      "http://jwts.hitwh.edu.cn/cjcx/queryQmcj",
-      "http://jwts.hitwh.edu.cn/pubtzgg/queryTzggByMxxs"
-    ]
-  },
   "colleges": {
     "description": "可选院系列表；为空时使用内置 HITWH 常见学院并从网页正文补充。",
     "type": "list",
     "items": {
       "type": "string"
-    },
-    "default": []
-  },
-  "qq_groups": {
-    "description": "QQ群元数据列表。可由外部平台适配器替换；当前配置模式用于静态同步。",
-    "type": "list",
-    "items": {
-      "type": "object"
-    },
-    "default": []
-  },
-  "qq_channels": {
-    "description": "QQ频道元数据列表。字段示例：guild_id、guild_name、channels。",
-    "type": "list",
-    "items": {
-      "type": "object"
     },
     "default": []
   },

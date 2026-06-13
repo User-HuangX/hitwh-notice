@@ -86,9 +86,7 @@ cat > "$CONFIG_DIR/astrbot_plugin_hitwh_info_config.json" << EOF
   "rerank_api_base": "https://api.siliconflow.cn/v1",
   "rerank_api_key": "$EMB_KEY",
   "rerank_model": "$RERANK_MODEL",
-  "website_urls": ["https://www.hitwh.edu.cn/", "https://today.hitwh.edu.cn/"],
-  "education_urls": ["http://jwts.hitwh.edu.cn/cjcx/queryQmcj", "http://jwts.hitwh.edu.cn/cjcx/querySxwcj"],
-  "colleges": [], "qq_groups": [], "qq_channels": [], "my_class": "",
+  "colleges": [],
   "group_whitelist": []
 }
 EOF

@@ -315,6 +315,7 @@ class HitwhInfoPlugin(Star):
             if len(docs) > 1:
                 reranked = await self._embedder.rerank(query, docs)
                 unique = [unique[r["index"]] for r in reranked if r["index"] < len(unique)]
+            self._log_rag_recall_success("cmd_search", query, candidates, unique, len(unique))
             lines = [f"🔍 「{query}」相关结果："]
             for c in unique:
                 lines.append(f"\n📌 [{c['source_type']}] {c.get('doc_content', c['content'])[:300]}")
@@ -378,10 +379,24 @@ class HitwhInfoPlugin(Star):
             return f"{row.get('school_year','')} {row.get('semester','')} {row.get('course_name','')} {row.get('credit','')}学分"
         return ""
 
+    @staticmethod
+    def _log_rag_recall_success(source: str, query: str, candidates: list[dict[str, Any]],
+                                unique: list[dict[str, Any]], returned_count: int) -> None:
+        top_sources = ",".join(str(c.get("source_type", "unknown")) for c in unique[:5])
+        logger.info(
+            "rag_recall_success source=%s query=%r candidates=%s unique=%s returned=%s top_sources=%s",
+            source, query, len(candidates), len(unique), returned_count, top_sources,
+        )
+
     # ========== LLM Tools ==========
 
     @filter.llm_tool(name="hitwh_search", desc="语义搜索HITWH校园信息知识库。每次对话自动调用。")
     async def tool_search(self, query: str) -> str:
+        """语义搜索 HITWH 校园信息知识库，适合查询通知、成绩、课表、考试、培养方案等综合问题。
+
+        Args:
+            query(string): 用户要查询的关键词或自然语言问题。
+        """
         if self.db is None: return ""
         q_embedding = await self._embedder.embed(query)
         candidates = await self.db.search_chunks(q_embedding)
@@ -392,6 +407,7 @@ class HitwhInfoPlugin(Star):
         if len(docs) > 1:
             reranked = await self._embedder.rerank(query, docs)
             unique = [unique[r["index"]] for r in reranked if r["index"] < len(unique)]
+        self._log_rag_recall_success("tool_search", query, candidates, unique, len(unique))
         return "\n".join(
             f"[{c['source_type']}] {c.get('doc_content', c['content'])[:200]}"
             for c in unique
@@ -399,6 +415,11 @@ class HitwhInfoPlugin(Star):
 
     @filter.llm_tool(name="hitwh_grades", desc="精确查询HITWH学生成绩。输入课程名关键词(如'微积分'、'英语')或留空查全部。返回学期、课程名、分数、课程性质。用于查询具体课程成绩、挂科情况等。")
     async def tool_grades(self, keyword: str = "") -> str:
+        """从数据库精确查询 HITWH 学生成绩，适合回答某门课多少分、是否挂科、历年成绩等问题。
+
+        Args:
+            keyword(string): 课程名关键词；留空表示查询全部成绩。
+        """
         if self.db is None: return "数据库不可用"
         grades = await self.db.query_grades(keyword)
         if not grades: return "未查到成绩"
@@ -410,6 +431,11 @@ class HitwhInfoPlugin(Star):
 
     @filter.llm_tool(name="hitwh_schedule", desc="查询HITWH本学期个人课表。输入课程名或教师名关键词过滤(如'电磁场'、'周洪娟')或留空查全部。返回星期几、第几节、课程详情(含教师、周次、教室)。用于查询某天有什么课、某门课的上课时间地点等。")
     async def tool_schedule(self, query: str = "") -> str:
+        """从数据库查询 HITWH 本学期个人课表，适合回答今天/某天有什么课、课程时间地点等问题。
+
+        Args:
+            query(string): 课程名、教师名、教室或其他课表关键词；留空表示查询全部课表。
+        """
         if self.db is None: return "数据库不可用"
         schedules = await self.db.query_schedules()
         if not schedules: return "未查到课表"
@@ -423,6 +449,11 @@ class HitwhInfoPlugin(Star):
 
     @filter.llm_tool(name="hitwh_exams", desc="查询HITWH考试安排。输入课程名关键词过滤或留空查全部。返回课程名、考试时间、考试地点、座位号。用于查询某门课何时考试、在哪个教室、最近有哪些考试等。")
     async def tool_exams(self, query: str = "") -> str:
+        """从数据库查询 HITWH 考试安排，适合回答考试时间、地点、座位号、最近考试等问题。
+
+        Args:
+            query(string): 课程名或考试安排关键词；留空表示查询全部考试安排。
+        """
         if self.db is None: return "数据库不可用"
         exams = await self.db.query_exams()
         if not exams: return "未查到考试安排"
@@ -434,6 +465,11 @@ class HitwhInfoPlugin(Star):
 
     @filter.llm_tool(name="hitwh_plan", desc="查询HITWH专业培养方案/教学计划。输入课程名关键词过滤或留空查全部。返回开课学年学期、课程名、学分。用于查询培养方案中有哪些课、某门课多少学分、某学期有哪些课等。")
     async def tool_plan(self, keyword: str = "") -> str:
+        """从数据库查询 HITWH 专业培养方案/教学计划，适合回答课程学分、开课学期、培养方案课程等问题。
+
+        Args:
+            keyword(string): 课程名或培养方案关键词；留空表示查询全部培养方案课程。
+        """
         if self.db is None: return "数据库不可用"
         plans = await self.db.query_plan(keyword)
         if not plans: return "未查到培养方案"
@@ -507,6 +543,7 @@ class HitwhInfoPlugin(Star):
             unique = [c for c in candidates if c["document_id"] not in seen and not seen.add(c["document_id"])]
             context = "\n".join(c.get("doc_content", c["content"])[:200] for c in unique[:8])
             if context:
+                self._log_rag_recall_success("llm_context", msg, candidates, unique, min(len(unique), 8))
                 event.set_extra("hitwh_context", context)
         except Exception:
             pass

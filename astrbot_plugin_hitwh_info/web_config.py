@@ -17,6 +17,14 @@ CONFIG_PATHS = [
     "/home/hx/Astrbot/data/config/astrbot_plugin_hitwh_info.json",
 ]
 
+DEPRECATED_CONFIG_KEYS = {
+    "my_class",
+    "website_urls",
+    "education_urls",
+    "qq_groups",
+    "qq_channels",
+}
+
 HTML = r"""<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -293,6 +301,8 @@ def _save_config(webvpn_base: str, token: str) -> None:
         if p.exists():
             try:
                 data = json.loads(p.read_text())
+                for key in DEPRECATED_CONFIG_KEYS:
+                    data.pop(key, None)
                 data["webvpn_base"] = webvpn_base
                 data["token"] = token
                 data.setdefault("sync_interval_hours", 1)
