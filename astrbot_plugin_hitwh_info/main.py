@@ -64,6 +64,7 @@ class HitwhInfoPlugin(Star):
         super().__init__(context, config)
         self.config = config or {}
         self.db = HitwhDB(self.config.get("postgres_dsn"))
+        self._bufs: dict[str, dict] = {}
         logger.info("hitwh_init dsn=%s", self.config.get("postgres_dsn", "")[:50])
         self.hierarchy = HierarchyMatcher(self.db)
         self._embedder = Embedder(
@@ -126,6 +127,9 @@ class HitwhInfoPlugin(Star):
         for t in self._tasks:
             if not t.done():
                 t.cancel()
+        for gid, buf in list(self._bufs.items()):
+            await self._flush_buffer(gid, buf)
+        self._bufs.clear()
         if self._web_config is not None:
             await self._web_config.stop()
             self._web_config = None
@@ -408,30 +412,41 @@ class HitwhInfoPlugin(Star):
             yield event.plain_result("⚠️ 索引失败")
 
     async def _embed_on_message(self, text: str, event) -> None:
-        """收到消息时合并最近上下文再嵌入（解决QQ碎片化问题）"""
+        """缓冲 + 异同检测：同群同人连续消息合并嵌入，换人或时间隔断则 flush"""
         if self.db is None or len(text.strip()) < 2:
             return
+        where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
+        sender = str(event.get_sender_id() or "")
+        now = datetime.utcnow() + timedelta(hours=8)
+        buf = self._bufs.get(where)
+        # 判断是否需要 flush：换人 ｜ 时间断层 >30s ｜ 长度溢出
+        if buf is not None:
+            gap = (now - buf["last_time"]).total_seconds()
+            if buf["sender"] != sender or gap > 30 or buf["chars"] + len(text) > 300:
+                await self._flush_buffer(where, buf)
+                buf = None
+        if buf is None:
+            buf = {"lines": [], "sender": sender, "last_time": now, "chars": 0}
+            self._bufs[where] = buf
+        buf["lines"].append(text)
+        buf["chars"] += len(text)
+        buf["last_time"] = now
+
+    async def _flush_buffer(self, group_id: str, buf: dict) -> None:
+        merged = "\n".join(buf["lines"])
+        if len(merged.strip()) < 4:
+            return
         try:
-            where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
-            # 拉取同群最近 N 条消息拼成上下文
-            recent = await self.db.query_qq_messages(group_id=where, limit=5)
-            lines = [m["content"] for m in reversed(recent) if m.get("content")]
-            lines.append(text)
-            merged = "\n".join(lines)
-            if len(merged) < 4:
-                return
             embedding = await self._embedder.embed(merged)
-            who = str(event.get_sender_name() or "") or str(event.get_sender_id() or "")
-            where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
             await self.db.upsert_document(
-                title=f"QQ-{who}@{where}",
-                content=text,
+                title=f"QQ@{group_id}",
+                content=merged,
                 source_type="qq_group_msg",
-                source_name=where,
-                chunks_data=[{"content": text, "embedding": embedding}],
+                source_name=group_id,
+                chunks_data=[{"content": merged, "embedding": embedding}],
             )
         except Exception:
-            logger.exception("embed_on_message_failed")
+            logger.exception("flush_buffer_failed")
 
     async def _index_knowledge(self) -> int:
         """手动 /索引 - 索引教务数据到知识库"""
