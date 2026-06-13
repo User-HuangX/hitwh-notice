@@ -111,18 +111,19 @@ class HitwhInfoPlugin(Star):
 
     def _start_timers(self) -> None:
         interval_h = int(self.config.get("sync_interval_hours", 1))
+        self._tasks = []
         if interval_h <= 0:
-            self._tasks = []
-            logger.info("auto_sync_disabled interval_hours=%s", interval_h)
-            return
-        self._tasks = [
-            asyncio.ensure_future(self._timer("grades", self._sync_grades, interval_h)),
-            asyncio.ensure_future(self._timer("schedule", self._sync_schedule, interval_h)),
-            asyncio.ensure_future(self._timer("exams", self._sync_exams, interval_h)),
-            asyncio.ensure_future(self._timer("plan", self._sync_plan, interval_h)),
-            asyncio.ensure_future(self._index_timer(5)),
-        ]
-        logger.info("auto_sync_started interval_hours=%s modules=5", interval_h)
+            logger.info("edu_sync_disabled interval_hours=%s", interval_h)
+        else:
+            self._tasks += [
+                asyncio.ensure_future(self._timer("grades", self._sync_grades, interval_h)),
+                asyncio.ensure_future(self._timer("schedule", self._sync_schedule, interval_h)),
+                asyncio.ensure_future(self._timer("exams", self._sync_exams, interval_h)),
+                asyncio.ensure_future(self._timer("plan", self._sync_plan, interval_h)),
+            ]
+            logger.info("edu_sync_started interval_hours=%s modules=4", interval_h)
+        self._tasks.append(asyncio.ensure_future(self._index_timer(5)))
+        logger.info("index_timer_started interval_minutes=5")
 
     async def _index_timer(self, interval_minutes: int) -> None:
         await asyncio.sleep(5)
