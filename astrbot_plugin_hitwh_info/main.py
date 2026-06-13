@@ -15,9 +15,12 @@ logger = logging.getLogger(__name__)
 
 try:
     from astrbot.api.event import filter
+    from astrbot.api.event.filter import EventMessageType
     from astrbot.api.star import Context, Star
 except Exception:
     Context = Any
+    class EventMessageType:
+        GROUP_MESSAGE = "GroupMessage"
     class Star:
         def __init__(self, context: Any = None, config: dict[str, Any] | None = None) -> None:
             self.context = context
@@ -424,7 +427,7 @@ class HitwhInfoPlugin(Star):
     async def _on_platform_ready(self, event: Any = None):
         pass
 
-    @filter.event_message_type("GroupMessage")
+    @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
     async def _on_group_message(self, event: Any = None):
         whitelist: list = self.config.get("group_whitelist") or []
         group_id = str(event.get_group_id() or "")
