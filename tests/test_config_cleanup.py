@@ -20,6 +20,24 @@ def test_config_schema_excludes_deprecated_keys():
     assert DEPRECATED_CONFIG_KEYS.isdisjoint(schema)
 
 
+def test_config_schema_uses_astrbot_webui_friendly_fields():
+    schema_path = Path("astrbot_plugin_hitwh_info/_conf_schema.json")
+    schema = json.loads(schema_path.read_text())
+
+    assert schema["token"]["type"] == "text"
+    assert schema["token"]["obvious_hint"] is True
+    assert schema["webvpn_base"]["default"] == "http://jwts-hitwh-edu-cn.ivpn.hitwh.edu.cn:8118"
+    assert schema["embedding_api_key"]["obvious_hint"] is True
+    assert schema["rerank_api_key"]["obvious_hint"] is True
+
+
+def test_main_relies_on_conf_schema_not_runtime_put_config():
+    main_py = Path("astrbot_plugin_hitwh_info/main.py").read_text()
+
+    assert "put_config" not in main_py
+    assert "_register_config_keys" not in main_py
+
+
 def test_install_script_excludes_deprecated_keys():
     script = Path("install.sh").read_text()
 

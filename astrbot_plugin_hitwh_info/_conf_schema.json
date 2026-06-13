@@ -5,16 +5,17 @@
     "default": ""
   },
   "token": {
-    "description": "本科教育网 Cookie/Token。公网直连填 jwts.hitwh.edu.cn 的 Cookie；WebVPN 模式填 VPN Cookie。",
-    "type": "string",
+    "description": "教务系统 Cookie。推荐通过 http://localhost:8888 一键捕获后自动保存。",
+    "type": "text",
     "default": "",
-    "hint": "WebVPN：浏览器登录 webvpn.hitwh.edu.cn 后，F12 -> Application -> Cookies 复制 wengine_vpn_ticket 等"
+    "hint": "手动填写时复制成绩页 /cjcx/queryQmcj 请求头里的 Cookie 值，不要带 Cookie: 前缀。",
+    "obvious_hint": true
   },
   "webvpn_base": {
-    "description": "WebVPN 基础 URL。为空则直连 jwts.hitwh.edu.cn（内网）。",
+    "description": "IVPN/WebVPN 教务基础地址。教务接口路径已在代码中固定。",
     "type": "string",
-    "default": "",
-    "hint": "例如 https://webvpn.hitwh.edu.cn/http/77726476706e69737468656265737421fae0558f693861446900c7a99c406d3667"
+    "default": "http://jwts-hitwh-edu-cn.ivpn.hitwh.edu.cn:8118",
+    "hint": "通常保持默认；如使用 webvpn.hitwh.edu.cn/http/... 代理地址，可填其不带业务路径的基础 URL。"
   },
   "colleges": {
     "description": "可选院系列表；为空时使用内置 HITWH 常见学院并从网页正文补充。",
@@ -25,10 +26,10 @@
     "default": []
   },
   "sync_interval_hours": {
-    "description": "自动同步间隔（小时），设为0关闭自动同步",
+    "description": "自动同步间隔（小时）",
     "type": "int",
     "default": 1,
-    "hint": "每N小时自动跑一次 /hitwh_sync"
+    "hint": "每 N 小时自动同步成绩、课表、考试和培养方案；当前小于等于 0 会按 1 小时处理。"
   },
   "group_whitelist": {
     "description": "QQ群消息采集白名单，群号列表。为空时不采集任何群消息。",
@@ -46,7 +47,8 @@
     "description": "嵌入模型 API Key",
     "type": "string",
     "default": "",
-    "hint": "在 https://siliconflow.cn 注册获取"
+    "hint": "在 https://siliconflow.cn 注册获取；用于 /索引 和语义搜索。",
+    "obvious_hint": true
   },
   "embedding_model": {
     "description": "嵌入模型名称",
@@ -69,7 +71,8 @@
     "description": "重排模型 API Key",
     "type": "string",
     "default": "",
-    "hint": "可与嵌入模型共用同一个 Key"
+    "hint": "可与嵌入模型共用同一个 Key。",
+    "obvious_hint": true
   },
   "rerank_model": {
     "description": "重排模型名称",

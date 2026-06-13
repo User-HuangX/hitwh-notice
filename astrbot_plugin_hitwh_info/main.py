@@ -1,7 +1,6 @@
 """HITWH 校园信息插件 - 成绩/课表/考试/培养方案查询、语义搜索、QQ消息采集"""
 from __future__ import annotations
 import asyncio
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -12,13 +11,13 @@ from .embedding import Embedder
 from .hierarchy import HierarchyMatcher
 from .web_config import WebConfig
 
-logger = logging.getLogger(__name__)
-
 try:
+    from astrbot.api import logger
     from astrbot.api.event import filter
     from astrbot.api.event.filter import EventMessageType
     from astrbot.api.star import Context, Star
 except Exception:
+    logger = logging.getLogger(__name__)
     Context = Any
     class EventMessageType:
         GROUP_MESSAGE = "GroupMessage"
@@ -71,7 +70,6 @@ class HitwhInfoPlugin(Star):
         self._web_config: WebConfig | None = None
 
     async def initialize(self) -> None:
-        self._register_config_keys()
         try:
             await self.db.init_schema()
             await self.hierarchy.bootstrap(self.config.get("colleges"))
@@ -96,24 +94,6 @@ class HitwhInfoPlugin(Star):
         except Exception:
             self._web_config = None
             logger.warning("web_config_start_failed", exc_info=True)
-
-    def _register_config_keys(self) -> None:
-        try:
-            from astrbot.core.star.config import put_config
-            namespace = "astrbot_plugin_hitwh_info"
-            defaults = [
-                ("embedding_api_base", "嵌入模型API地址", "https://api.siliconflow.cn/v1", "硅基流动等OpenAI兼容的嵌入API地址"),
-                ("embedding_api_key", "嵌入模型API Key", "", "硅基流动等平台的API Key"),
-                ("embedding_model", "嵌入模型名称", "BAAI/bge-m3", "例如 BAAI/bge-m3"),
-                ("embedding_dim", "嵌入向量维度", 1024, "与模型匹配的向量维度"),
-                ("rerank_api_base", "重排模型API地址", "https://api.siliconflow.cn/v1", "重排API地址"),
-                ("rerank_api_key", "重排模型API Key", "", "重排API Key"),
-                ("rerank_model", "重排模型名称", "BAAI/bge-reranker-v2-m3", "例如 BAAI/bge-reranker-v2-m3"),
-            ]
-            for key, name, value, desc in defaults:
-                put_config(namespace, name, key, value, desc)
-        except Exception:
-            logger.debug("config_register_skipped")
 
     async def terminate(self) -> None:
         for t in self._tasks:
@@ -306,6 +286,7 @@ class HitwhInfoPlugin(Star):
         yield event.plain_result("🔍 正在语义搜索...")
         try:
             q_embedding = await self._embedder.embed(query)
+            self._log_rag_recall_start("cmd_search", query, q_embedding)
             candidates = await self.db.search_chunks(q_embedding)
             if not candidates:
                 yield event.plain_result("⚠️ 知识库为空或未找到相关结果"); return
@@ -380,6 +361,13 @@ class HitwhInfoPlugin(Star):
         return ""
 
     @staticmethod
+    def _log_rag_recall_start(source: str, query: str, embedding: list[float]) -> None:
+        logger.info(
+            "rag_recall_start source=%s query=%r embedding_dim=%s",
+            source, query, len(embedding),
+        )
+
+    @staticmethod
     def _log_rag_recall_success(source: str, query: str, candidates: list[dict[str, Any]],
                                 unique: list[dict[str, Any]], returned_count: int) -> None:
         top_sources = ",".join(str(c.get("source_type", "unknown")) for c in unique[:5])
@@ -399,6 +387,7 @@ class HitwhInfoPlugin(Star):
         """
         if self.db is None: return ""
         q_embedding = await self._embedder.embed(query)
+        self._log_rag_recall_start("tool_search", query, q_embedding)
         candidates = await self.db.search_chunks(q_embedding)
         if not candidates: return ""
         seen: set[int] = set()
@@ -537,6 +526,7 @@ class HitwhInfoPlugin(Star):
         if not msg or self.db is None: return
         try:
             q_embedding = await self._embedder.embed(msg)
+            self._log_rag_recall_start("llm_context", msg, q_embedding)
             candidates = await self.db.search_chunks(q_embedding)
             if not candidates: return
             seen: set[int] = set()
