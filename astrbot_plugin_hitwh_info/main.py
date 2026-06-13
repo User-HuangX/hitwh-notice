@@ -10,6 +10,7 @@ from ._utils import extract_msg, strip_command_prefix
 from .db import HitwhDB
 from .embedding import Embedder
 from .hierarchy import HierarchyMatcher
+from .web_config import WebConfig
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class HitwhInfoPlugin(Star):
             rerank_model=self.config.get("rerank_model", ""),
         )
         self._tasks: list[asyncio.Task] = []
+        self._web_config: WebConfig | None = None
 
     async def initialize(self) -> None:
         self._register_config_keys()
@@ -76,8 +78,24 @@ class HitwhInfoPlugin(Star):
         except Exception:
             logger.warning("hitwh_db_unavailable disable db features", exc_info=True)
             self.db = None
+        await self._start_web_config()
         logger.info("hitwh_plugin_ready")
         self._start_timers()
+
+    async def _start_web_config(self) -> None:
+        callbacks = {
+            "grades": self._sync_grades,
+            "schedule": self._sync_schedule,
+            "exams": self._sync_exams,
+            "plan": self._sync_plan,
+            "index": self._index_knowledge,
+        }
+        try:
+            self._web_config = WebConfig(self.config, callbacks)
+            await self._web_config.start()
+        except Exception:
+            self._web_config = None
+            logger.warning("web_config_start_failed", exc_info=True)
 
     def _register_config_keys(self) -> None:
         try:
@@ -101,6 +119,9 @@ class HitwhInfoPlugin(Star):
         for t in self._tasks:
             if not t.done():
                 t.cancel()
+        if self._web_config is not None:
+            await self._web_config.stop()
+            self._web_config = None
         if self.db is not None:
             await self.db.close()
         logger.info("hitwh_plugin_terminated")
