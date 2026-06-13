@@ -408,11 +408,19 @@ class HitwhInfoPlugin(Star):
             yield event.plain_result("⚠️ 索引失败")
 
     async def _embed_on_message(self, text: str, event) -> None:
-        """收到消息时直接嵌入入库，跳过太短的消息"""
-        if self.db is None or len(text.strip()) < 4:
+        """收到消息时合并最近上下文再嵌入（解决QQ碎片化问题）"""
+        if self.db is None or len(text.strip()) < 2:
             return
         try:
-            embedding = await self._embedder.embed(text)
+            where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
+            # 拉取同群最近 N 条消息拼成上下文
+            recent = await self.db.query_qq_messages(group_id=where, limit=5)
+            lines = [m["content"] for m in reversed(recent) if m.get("content")]
+            lines.append(text)
+            merged = "\n".join(lines)
+            if len(merged) < 4:
+                return
+            embedding = await self._embedder.embed(merged)
             who = str(event.get_sender_name() or "") or str(event.get_sender_id() or "")
             where = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else "private"
             await self.db.upsert_document(
