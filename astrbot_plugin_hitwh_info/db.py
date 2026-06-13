@@ -220,12 +220,30 @@ class HitwhDB:
         self.connect_kwargs = connect_kwargs
         self._engine = None
         self._sessionmaker = None
+        self._pool = None
+        self._pool_dsn: str = ""
 
     async def close(self) -> None:
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
             self._sessionmaker = None
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+
+    async def _get_pool(self):
+        if self._pool is None:
+            dsn = self.dsn or "postgresql://postgres:postgres@localhost:5432/postgres"
+            raw = dsn
+            for prefix in ("postgresql+asyncpg://", "postgresql+psycopg://", "postgresql://"):
+                if raw.startswith(prefix):
+                    raw = raw[len(prefix):]
+                    break
+            self._pool = await asyncpg.create_pool(
+                f"postgresql://{raw}", min_size=1, max_size=5
+            )
+        return self._pool
 
     async def _ensure_engine(self):
         if self._engine is None:
@@ -535,7 +553,7 @@ class HitwhDB:
             rows = await conn.fetch(
                 "SELECT * FROM hitwh_qq_messages ORDER BY message_time DESC LIMIT $1", limit,
             )
-            return [dict(row) for row in rows]
+        return [dict(row) for row in rows]
 
     # ======== documents & chunks ========
 
