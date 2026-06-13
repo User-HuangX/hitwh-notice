@@ -552,10 +552,15 @@ class HitwhDB:
 
             doc_id = doc.id
             for i, cd in enumerate(chunks_data):
-                session.add(Chunk(
-                    document_id=doc_id, chunk_index=i,
-                    content=cd["content"], embedding=cd.get("embedding", []),
-                ))
+                stmt = (
+                    pg_insert(Chunk)
+                    .values(
+                        document_id=doc_id, chunk_index=i,
+                        content=cd["content"], embedding=cd.get("embedding", []),
+                    )
+                    .on_conflict_do_nothing(constraint="idx_chunk_doc_content")
+                )
+                await session.execute(stmt)
             logger.info("doc_upserted id=%s title=%s chunks=%s", doc_id, title[:40], len(chunks_data))
             return doc_id
 
