@@ -119,8 +119,9 @@ class HitwhInfoPlugin(Star):
             asyncio.ensure_future(self._timer("schedule", self._sync_schedule, interval_h)),
             asyncio.ensure_future(self._timer("exams", self._sync_exams, interval_h)),
             asyncio.ensure_future(self._timer("plan", self._sync_plan, interval_h)),
+            asyncio.ensure_future(self._timer("index", self._index_knowledge, interval_h)),
         ]
-        logger.info("auto_sync_started interval_hours=%s modules=4", interval_h)
+        logger.info("auto_sync_started interval_hours=%s modules=5", interval_h)
 
     async def _timer(self, name: str, sync_fn, interval_hours: int) -> None:
         await asyncio.sleep(5 + hash(name) % 30)
@@ -572,12 +573,6 @@ class HitwhInfoPlugin(Star):
                 content=content,
                 message_time=datetime.utcnow(),
             )
-            user_id = str(event.get_sender_id() or "")
-            index_coro = self._auto_index_message(user_id, content)
-            try:
-                self._tasks.append(asyncio.ensure_future(index_coro))
-            except RuntimeError:
-                await index_coro
         except Exception:
             logger.exception("qq_msg_insert_failed")
 
