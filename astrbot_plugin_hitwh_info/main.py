@@ -2,7 +2,7 @@
 from __future__ import annotations
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from ._utils import extract_msg, strip_command_prefix
@@ -596,7 +596,7 @@ class HitwhInfoPlugin(Star):
                 user_id=str(event.get_sender_id() or ""),
                 nickname=str(event.get_sender_name() or ""),
                 content=content,
-                message_time=datetime.utcnow(),
+                message_time=datetime.utcnow() + timedelta(hours=8),
             )
         except Exception:
             logger.exception("qq_msg_insert_failed")

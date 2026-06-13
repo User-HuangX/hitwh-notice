@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -41,6 +41,10 @@ except ImportError:
 
 from ._utils import with_conn
 
+
+def _now():
+    return datetime.utcnow() + timedelta(hours=8)
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +61,7 @@ class HierarchyNode(Base):
     name: Mapped[str] = mapped_column()
     status: Mapped[str] = mapped_column(default="pending")
     path: Mapped[str] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (
         CheckConstraint("level IN ('学校','院系','导员','班级')"),
@@ -94,7 +98,7 @@ class Grade(Base):
     student_type: Mapped[str] = mapped_column(default="")
     submit_time: Mapped[str] = mapped_column(default="")
     grade_hash: Mapped[str] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (Index("idx_grades_hash", "grade_hash", unique=True),)
 
@@ -108,7 +112,7 @@ class Schedule(Base):
     time_slot: Mapped[str] = mapped_column()
     raw_content: Mapped[str] = mapped_column(default="")
     schedule_hash: Mapped[str] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (Index("idx_schedule_hash", "schedule_hash", unique=True),)
 
@@ -120,7 +124,7 @@ class QQGroup(Base):
     group_id: Mapped[str] = mapped_column(unique=True)
     group_name: Mapped[str] = mapped_column()
     member_count: Mapped[int] = mapped_column(default=0)
-    updated_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (Index("idx_qq_group_id", "group_id", unique=True),)
 
@@ -134,7 +138,7 @@ class QQGroupMessage(Base):
     nickname: Mapped[str] = mapped_column(default="")
     content: Mapped[str] = mapped_column()
     message_time: Mapped[datetime] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (Index("idx_qq_msg_group", "group_id"), Index("idx_qq_msg_time", "message_time"))
 
@@ -149,7 +153,7 @@ class Exam(Base):
     seat_number: Mapped[str] = mapped_column(default="")
     exam_time: Mapped[str] = mapped_column()
     exam_hash: Mapped[str] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (Index("idx_exams_hash", "exam_hash", unique=True),)
 
@@ -170,7 +174,7 @@ class Plan(Base):
     hours: Mapped[str] = mapped_column(default="")
     is_exam: Mapped[str] = mapped_column(default="")
     plan_hash: Mapped[str] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     __table_args__ = (Index("idx_plan_hash", "plan_hash", unique=True),)
 
@@ -184,7 +188,7 @@ class Document(Base):
     source_type: Mapped[str] = mapped_column()
     source_name: Mapped[str] = mapped_column(default="")
     chunk_count: Mapped[int] = mapped_column(default=0)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     chunks: Mapped[list["Chunk"]] = relationship("Chunk", back_populates="document",
                                                    cascade="all, delete-orphan")
@@ -202,7 +206,7 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(default=0)
     content: Mapped[str] = mapped_column()
     embedding: Mapped[list[float]] = mapped_column(Vector(1024) if Vector else String(4096))
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=_now)
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
 
