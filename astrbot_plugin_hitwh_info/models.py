@@ -1,33 +1,26 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-@dataclass(slots=True)
-class WebPage:
+
+class WebPage(BaseModel):
     url: str
     title: str
     text: str
-    links: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    links: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    raw_html: str = ""
 
 
-@dataclass(slots=True)
-class SourceFact:
+class SourceFact(BaseModel):
     fact: str
     source_type: str
     source_name: str
     hierarchy_id: int | None = None
     embedding: list[float] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def as_record(self) -> dict[str, Any]:
-        return {
-            "fact": self.fact,
-            "source_type": self.source_type,
-            "source_name": self.source_name,
-            "hierarchy_id": self.hierarchy_id,
-            "embedding": self.embedding,
-            "metadata": self.metadata,
-        }
+        return self.model_dump()

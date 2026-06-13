@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Awaitable, Callable
 from typing import Any
+
+from more_itertools import unique_everseen
+
+from ._utils import call_provider_method
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,9 @@ class FactSplitter:
             return []
         if self.llm_provider is not None:
             try:
-                response = await self._call_llm(clean_text)
+                response = await call_provider_method(
+                    self.llm_provider, ["text_chat", "ask", "chat"], prompt=self.prompt_template.format(text=clean_text)
+                )
                 facts = self._parse_lines(str(response))
                 if facts:
                     logger.info("llm_fact_split count=%s", len(facts))
@@ -39,24 +44,9 @@ class FactSplitter:
         logger.info("rule_fact_split count=%s", len(facts))
         return facts
 
-    async def _call_llm(self, text: str) -> Any:
-        prompt = self.prompt_template.format(text=text)
-        method: Callable[..., Awaitable[Any]] | None = None
-        for name in ("text_chat", "ask", "chat"):
-            candidate = getattr(self.llm_provider, name, None)
-            if candidate is not None:
-                method = candidate
-                break
-        if method is None:
-            raise TypeError("llm_provider must expose text_chat, ask or chat")
-        try:
-            return await method(prompt=prompt)
-        except TypeError:
-            return await method(prompt)
-
     def _rule_split(self, text: str) -> list[str]:
         chunks = re.split(r"(?<=[。！？!?；;])\s*|[\r\n]+", text)
-        return self._dedupe([chunk.strip() for chunk in chunks if self._valid(chunk)])
+        return list(unique_everseen(chunk.strip() for chunk in chunks if self._valid(chunk)))
 
     def _parse_lines(self, text: str) -> list[str]:
         lines = []
@@ -64,7 +54,7 @@ class FactSplitter:
             line = re.sub(r"^\s*(?:[-*•]|\d+[.)、])\s*", "", line).strip()
             if self._valid(line):
                 lines.append(line)
-        return self._dedupe(lines)
+        return list(unique_everseen(lines))
 
     def _valid(self, sentence: str) -> bool:
         sentence = sentence.strip()
@@ -77,13 +67,3 @@ class FactSplitter:
     @staticmethod
     def _normalize_text(text: str) -> str:
         return re.sub(r"[ \t]+", " ", text or "").strip()
-
-    @staticmethod
-    def _dedupe(items: list[str]) -> list[str]:
-        seen = set()
-        out = []
-        for item in items:
-            if item not in seen:
-                seen.add(item)
-                out.append(item)
-        return out

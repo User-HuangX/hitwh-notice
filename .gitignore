@@ -23,6 +23,8 @@ env/
 *.log
 *.sqlite
 *.sqlite3
+.codegraph
+.playwright-mcp
 
 # Editor / OS
 .idea/
@@ -32,3 +34,8 @@ Thumbs.db
 
 # Non-code documents in this working folder
 *.md
+!README.md
+
+# Build/deps
+uv.lock
+data/
