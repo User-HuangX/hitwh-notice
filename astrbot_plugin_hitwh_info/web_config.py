@@ -249,13 +249,13 @@ class WebConfig:
             return web.json_response({"ok": False, "error": "未捕获到有效 Cookie"})
         self.config["token"] = token
         self.config["webvpn_base"] = webvpn_base
-        _save_config(webvpn_base, token)
+        save_plugin_config(self.config, webvpn_base, token)
         logger.info("cookie_captured via web len=%s", len(token))
         return web.json_response({"ok": True, "token": token})
 
     async def _handle_clear(self, request: web.Request) -> web.Response:
         self.config["token"] = ""
-        _save_config(self.config.get("webvpn_base", ""), "")
+        save_plugin_config(self.config, self.config.get("webvpn_base", ""), "")
         return web.json_response({"ok": True})
 
 
@@ -295,24 +295,40 @@ async def _capture_cookie(webvpn_base: str, timeout: int = 120) -> str:
         return cookie_str
 
 
+def _normalize_config_data(data: dict[str, Any], webvpn_base: str, token: str) -> dict[str, Any]:
+    for key in DEPRECATED_CONFIG_KEYS:
+        data.pop(key, None)
+    data["webvpn_base"] = webvpn_base
+    data["token"] = token
+    data.setdefault("sync_interval_hours", 1)
+    data.setdefault("web_config_port", 8888)
+    data.setdefault("embedding_api_base", "https://api.siliconflow.cn/v1")
+    data.setdefault("embedding_api_key", "")
+    data.setdefault("embedding_model", "BAAI/bge-large-zh-v1.5")
+    data.setdefault("embedding_dim", 1024)
+    data.setdefault("rerank_api_base", "https://api.siliconflow.cn/v1")
+    data.setdefault("rerank_api_key", "")
+    data.setdefault("rerank_model", "BAAI/bge-reranker-v2-m3")
+    return data
+
+
+def save_plugin_config(config: dict[str, Any], webvpn_base: str, token: str) -> None:
+    _normalize_config_data(config, webvpn_base, token)
+    save = getattr(config, "save_config", None)
+    if callable(save):
+        save()
+        logger.info("config_saved via AstrBotConfig")
+        return
+    _save_config(webvpn_base, token)
+
+
 def _save_config(webvpn_base: str, token: str) -> None:
     for path_str in CONFIG_PATHS:
         p = Path(path_str)
         if p.exists():
             try:
                 data = json.loads(p.read_text())
-                for key in DEPRECATED_CONFIG_KEYS:
-                    data.pop(key, None)
-                data["webvpn_base"] = webvpn_base
-                data["token"] = token
-                data.setdefault("sync_interval_hours", 1)
-                data.setdefault("embedding_api_base", "https://api.siliconflow.cn/v1")
-                data.setdefault("embedding_api_key", "")
-                data.setdefault("embedding_model", "BAAI/bge-large-zh-v1.5")
-                data.setdefault("embedding_dim", 1024)
-                data.setdefault("rerank_api_base", "https://api.siliconflow.cn/v1")
-                data.setdefault("rerank_api_key", "")
-                data.setdefault("rerank_model", "BAAI/bge-reranker-v2-m3")
+                data = _normalize_config_data(data, webvpn_base, token)
                 p.write_text(json.dumps(data, ensure_ascii=False, indent=2))
                 logger.info("config_saved path=%s", p)
             except Exception:

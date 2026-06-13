@@ -574,6 +574,20 @@ class HitwhDB:
         return [dict(row) for row in rows]
 
     @with_conn
+    async def count_records(self, conn) -> dict[str, int]:
+        row = await conn.fetchrow(
+            """SELECT
+                  (SELECT count(*) FROM hitwh_grades) AS grades,
+                  (SELECT count(*) FROM hitwh_schedule) AS schedules,
+                  (SELECT count(*) FROM hitwh_exams) AS exams,
+                  (SELECT count(*) FROM hitwh_plan) AS plans,
+                  (SELECT count(*) FROM hitwh_documents) AS documents,
+                  (SELECT count(*) FROM hitwh_chunks) AS chunks
+               """
+        )
+        return dict(row) if row else {}
+
+    @with_conn
     async def get_document_chunks(self, conn, document_id: int) -> list[dict[str, Any]]:
         rows = await conn.fetch(
             "SELECT * FROM hitwh_chunks WHERE document_id=$1 ORDER BY chunk_index",

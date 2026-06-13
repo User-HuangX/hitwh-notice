@@ -29,7 +29,13 @@
     "description": "自动同步间隔（小时）",
     "type": "int",
     "default": 1,
-    "hint": "每 N 小时自动同步成绩、课表、考试和培养方案；当前小于等于 0 会按 1 小时处理。"
+    "hint": "每 N 小时自动同步成绩、课表、考试和培养方案；小于等于 0 时关闭自动同步。"
+  },
+  "web_config_port": {
+    "description": "Web 配置页面端口",
+    "type": "int",
+    "default": 8888,
+    "hint": "用于 http://localhost:端口 的 Cookie 捕获和手动同步页面；端口冲突时可修改。"
   },
   "group_whitelist": {
     "description": "QQ群消息采集白名单，群号列表。为空时不采集任何群消息。",

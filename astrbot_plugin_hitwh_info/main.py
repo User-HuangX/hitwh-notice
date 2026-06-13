@@ -9,7 +9,7 @@ from ._utils import extract_msg, strip_command_prefix
 from .db import HitwhDB
 from .embedding import Embedder
 from .hierarchy import HierarchyMatcher
-from .web_config import WebConfig
+from .web_config import WebConfig, save_plugin_config
 
 try:
     from astrbot.api import logger
@@ -21,6 +21,7 @@ except Exception:
     Context = Any
     class EventMessageType:
         GROUP_MESSAGE = "GroupMessage"
+        ALL = "AllMessage"
     class Star:
         def __init__(self, context: Any = None, config: dict[str, Any] | None = None) -> None:
             self.context = context
@@ -88,12 +89,13 @@ class HitwhInfoPlugin(Star):
             "plan": self._sync_plan,
             "index": self._index_knowledge,
         }
+        port = int(self.config.get("web_config_port", 8888) or 8888)
         try:
-            self._web_config = WebConfig(self.config, callbacks)
+            self._web_config = WebConfig(self.config, callbacks, port=port)
             await self._web_config.start()
         except Exception:
             self._web_config = None
-            logger.warning("web_config_start_failed", exc_info=True)
+            logger.warning("web_config_start_failed port=%s", port, exc_info=True)
 
     async def terminate(self) -> None:
         for t in self._tasks:
@@ -109,7 +111,9 @@ class HitwhInfoPlugin(Star):
     def _start_timers(self) -> None:
         interval_h = int(self.config.get("sync_interval_hours", 1))
         if interval_h <= 0:
-            interval_h = 1
+            self._tasks = []
+            logger.info("auto_sync_disabled interval_hours=%s", interval_h)
+            return
         self._tasks = [
             asyncio.ensure_future(self._timer("grades", self._sync_grades, interval_h)),
             asyncio.ensure_future(self._timer("schedule", self._sync_schedule, interval_h)),
@@ -134,6 +138,10 @@ class HitwhInfoPlugin(Star):
 
     def _get_edu_config(self) -> tuple[str, str]:
         return self.config.get("token", ""), self.config.get("webvpn_base", "")
+
+    def _has_edu_config(self) -> bool:
+        token, webvpn_base = self._get_edu_config()
+        return bool(token and webvpn_base)
 
     async def _sync_grades(self) -> int:
         if self.db is None: return 0
@@ -177,7 +185,11 @@ class HitwhInfoPlugin(Star):
         if not token:
             yield event.plain_result("⚠️ 未配置教务网token，发 /set_token 设置"); return
         yield event.plain_result("正在拉取最新成绩...")
-        count = await self._sync_grades()
+        try:
+            await self._sync_grades()
+        except Exception as e:
+            logger.exception("grades_sync_failed")
+            yield event.plain_result(f"⚠️ 成绩拉取失败：{e}"); return
         grades = await self.db.query_grades(keyword) if self.db else []
         if not grades:
             yield event.plain_result("⚠️ 没查到成绩"); return
@@ -259,6 +271,7 @@ class HitwhInfoPlugin(Star):
         if not msg or len(msg) < 10:
             yield event.plain_result("用法：/set_token cookie_string\n或直接编辑 data/config/astrbot_plugin_hitwh_info_config.json 中的 token 字段"); return
         self.config["token"] = msg
+        save_plugin_config(self.config, self.config.get("webvpn_base", ""), msg)
         yield event.plain_result("✅ 教务网token已更新！试试发 /成绩 /课程 /考试")
 
     @filter.command("hitwh", desc="显示插件帮助信息和所有可用命令")
@@ -271,6 +284,7 @@ class HitwhInfoPlugin(Star):
             "  /教学计划 [课程名] — 查培养方案\n"
             "  /搜索 <关键词>    — 语义搜索知识库\n"
             "  /索引            — 重建知识库向量索引\n"
+            "  /hitwh_status    — 查看插件状态\n"
             "  /set_token <c>   — 设置教务网Cookie\n"
             "  /hitwh           — 本帮助\n"
             "\n配置: 编辑 data/config/astrbot_plugin_hitwh_info_config.json"
@@ -289,6 +303,7 @@ class HitwhInfoPlugin(Star):
             self._log_rag_recall_start("cmd_search", query, q_embedding)
             candidates = await self.db.search_chunks(q_embedding)
             if not candidates:
+                self._log_rag_recall_empty("cmd_search", query, candidates)
                 yield event.plain_result("⚠️ 知识库为空或未找到相关结果"); return
             seen_docs: set[int] = set()
             unique = [c for c in candidates if c["document_id"] not in seen_docs and not seen_docs.add(c["document_id"])]
@@ -301,10 +316,33 @@ class HitwhInfoPlugin(Star):
             for c in unique:
                 lines.append(f"\n📌 [{c['source_type']}] {c.get('doc_content', c['content'])[:300]}")
             yield event.plain_result("\n".join(lines))
-            yield event.plain_result("\n".join(lines))
         except Exception:
             logger.exception("search_failed")
             yield event.plain_result("⚠️ 搜索失败")
+
+    @filter.command("hitwh_status", desc="检查 HITWH 插件状态：数据库、Token、同步与知识库数量")
+    async def cmd_status(self, event: Any = None):
+        token, webvpn_base = self._get_edu_config()
+        lines = ["📊 HITWH 插件状态"]
+        lines.append(f"数据库: {'可用' if self.db is not None else '不可用'}")
+        lines.append(f"Token: {'已配置' if token else '未配置'}")
+        lines.append(f"教务地址: {webvpn_base or '未配置'}")
+        lines.append(f"自动同步: {self.config.get('sync_interval_hours', 1)} 小时")
+        if self.db is not None:
+            try:
+                counts = await self.db.count_records()
+                lines.append(
+                    "数据量: "
+                    f"成绩{counts.get('grades', 0)} / 课表{counts.get('schedules', 0)} / "
+                    f"考试{counts.get('exams', 0)} / 培养方案{counts.get('plans', 0)}"
+                )
+                lines.append(
+                    f"知识库: 文档{counts.get('documents', 0)} / 分块{counts.get('chunks', 0)}"
+                )
+            except Exception:
+                logger.exception("status_count_failed")
+                lines.append("数据量: 查询失败")
+        yield event.plain_result("\n".join(lines))
 
     @filter.command("索引", desc="将成绩/课表/考试/培养方案数据拆分为原子事实，生成嵌入向量并存入知识库")
     async def cmd_index(self, event: Any = None):
@@ -368,6 +406,13 @@ class HitwhInfoPlugin(Star):
         )
 
     @staticmethod
+    def _log_rag_recall_empty(source: str, query: str, candidates: list[dict[str, Any]]) -> None:
+        logger.info(
+            "rag_recall_empty source=%s query=%r candidates=%s",
+            source, query, len(candidates),
+        )
+
+    @staticmethod
     def _log_rag_recall_success(source: str, query: str, candidates: list[dict[str, Any]],
                                 unique: list[dict[str, Any]], returned_count: int) -> None:
         top_sources = ",".join(str(c.get("source_type", "unknown")) for c in unique[:5])
@@ -389,7 +434,9 @@ class HitwhInfoPlugin(Star):
         q_embedding = await self._embedder.embed(query)
         self._log_rag_recall_start("tool_search", query, q_embedding)
         candidates = await self.db.search_chunks(q_embedding)
-        if not candidates: return ""
+        if not candidates:
+            self._log_rag_recall_empty("tool_search", query, candidates)
+            return ""
         seen: set[int] = set()
         unique = [c for c in candidates if c["document_id"] not in seen and not seen.add(c["document_id"])]
         docs = [c.get("doc_content", c["content"]) for c in unique]
@@ -411,6 +458,9 @@ class HitwhInfoPlugin(Star):
         """
         if self.db is None: return "数据库不可用"
         grades = await self.db.query_grades(keyword)
+        if not grades and self._has_edu_config():
+            await self._sync_grades()
+            grades = await self.db.query_grades(keyword)
         if not grades: return "未查到成绩"
         lines = []
         for g in grades[:30]:
@@ -427,6 +477,9 @@ class HitwhInfoPlugin(Star):
         """
         if self.db is None: return "数据库不可用"
         schedules = await self.db.query_schedules()
+        if not schedules and self._has_edu_config():
+            await self._sync_schedule()
+            schedules = await self.db.query_schedules()
         if not schedules: return "未查到课表"
         days = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         lines = []
@@ -445,6 +498,9 @@ class HitwhInfoPlugin(Star):
         """
         if self.db is None: return "数据库不可用"
         exams = await self.db.query_exams()
+        if not exams and self._has_edu_config():
+            await self._sync_exams()
+            exams = await self.db.query_exams()
         if not exams: return "未查到考试安排"
         lines = []
         for e in exams:
@@ -461,6 +517,9 @@ class HitwhInfoPlugin(Star):
         """
         if self.db is None: return "数据库不可用"
         plans = await self.db.query_plan(keyword)
+        if not plans and self._has_edu_config():
+            await self._sync_plan()
+            plans = await self.db.query_plan(keyword)
         if not plans: return "未查到培养方案"
         lines = []
         for p in plans[:20]:
@@ -473,33 +532,40 @@ class HitwhInfoPlugin(Star):
     async def _on_platform_ready(self, event: Any = None):
         pass
 
-    @filter.event_message_type(EventMessageType.GROUP_MESSAGE)
-    async def _on_group_message(self, event: Any = None):
-        whitelist: list = self.config.get("group_whitelist") or []
-        group_id = str(event.get_group_id() or "")
-        if not group_id: return
+    @filter.event_message_type(EventMessageType.ALL)
+    async def _on_message(self, event: Any = None):
+        content = event.get_message_str() or ""
+        if not content.strip(): return
         if self.db is None: return
+        group_id = str(event.get_group_id() or "") if hasattr(event, "get_group_id") else ""
         try:
-            group_name = str(event.message_obj.group.group_name or "") if event.message_obj and event.message_obj.group else ""
-            member_count = len(event.message_obj.group.members) if event.message_obj and event.message_obj.group and event.message_obj.group.members else 0
-            if group_name:
+            group = event.message_obj.group if group_id and event.message_obj and event.message_obj.group else None
+            group_name = str(group.group_name or "") if group else ""
+            member_count = len(group.members) if group and group.members else 0
+            if group_id and group_name:
                 await self.db.upsert_qq_group(group_id, group_name, member_count)
         except Exception:
             logger.exception("qq_group_upsert_failed group_id=%s", group_id)
-        if not whitelist or group_id not in whitelist: return
         try:
+            source_id = group_id or "private"
             await self.db.insert_qq_message(
-                group_id=group_id,
+                group_id=source_id,
                 user_id=str(event.get_sender_id() or ""),
                 nickname=str(event.get_sender_name() or ""),
-                content=event.get_message_str() or "",
+                content=content,
                 message_time=datetime.now(timezone.utc),
             )
-            self._tasks.append(asyncio.ensure_future(
-                self._auto_index_message(str(event.get_sender_id() or ""), event.get_message_str() or "")
-            ))
+            user_id = str(event.get_sender_id() or "")
+            index_coro = self._auto_index_message(user_id, content)
+            try:
+                self._tasks.append(asyncio.ensure_future(index_coro))
+            except RuntimeError:
+                await index_coro
         except Exception:
             logger.exception("qq_msg_insert_failed")
+
+    async def _on_group_message(self, event: Any = None):
+        await self._on_message(event)
 
     async def _auto_index_message(self, user_id: str, content: str) -> None:
         if self.db is None: return
@@ -528,7 +594,9 @@ class HitwhInfoPlugin(Star):
             q_embedding = await self._embedder.embed(msg)
             self._log_rag_recall_start("llm_context", msg, q_embedding)
             candidates = await self.db.search_chunks(q_embedding)
-            if not candidates: return
+            if not candidates:
+                self._log_rag_recall_empty("llm_context", msg, candidates)
+                return
             seen: set[int] = set()
             unique = [c for c in candidates if c["document_id"] not in seen and not seen.add(c["document_id"])]
             context = "\n".join(c.get("doc_content", c["content"])[:200] for c in unique[:8])

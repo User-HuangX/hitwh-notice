@@ -12,6 +12,7 @@
 | `/课程` | 本学期个人课表（每日每节课） | 教务网 `kbcx/queryGrkb` |
 | `/考试` | 考试安排（时间/地点/座位号） | 教务网 `kscx/queryKcForXs` |
 | `/教学计划 [课程名]` | 专业培养方案 | 教务网 `zxjh/queryZxkc` |
+| `/hitwh_status` | 查看数据库、Token、同步和知识库状态 | 插件内部状态检查 |
 
 ### 语义搜索（RAG）
 
@@ -90,6 +91,7 @@ uv tool run --from playwright playwright install chromium
   "token": "",
   "webvpn_base": "http://jwts-hitwh-edu-cn.ivpn.hitwh.edu.cn:8118",
   "sync_interval_hours": 1,
+  "web_config_port": 8888,
   "group_whitelist": [],
   "colleges": [],
   "embedding_api_base": "https://api.siliconflow.cn/v1",
@@ -116,6 +118,7 @@ uv tool run --from playwright playwright install chromium
 | `token` | 教务网 Cookie | 空（通过 Web 界面获取） |
 | `webvpn_base` | IVPN/WebVPN 教务地址 | - |
 | `sync_interval_hours` | 数据自动同步间隔（小时） | 1 |
+| `web_config_port` | Web 配置页面端口 | 8888 |
 | `group_whitelist` | QQ 群消息白名单（群号列表） | `[]`（不采集） |
 | `colleges` | 可选院系列表；为空时使用内置学院列表 | `[]` |
 | `embedding_api_base` | 嵌入模型 API 地址 | - |
@@ -190,6 +193,5 @@ astrbot_plugin_hitwh_info/
     ├── exams.py         # 考试抓取
     ├── plan.py          # 培养方案抓取
     ├── qq_collector.py  # QQ 群/频道信息采集
-    ├── website.py       # 学校官网抓取
-    └── education.py     # 本科教育网（aiohttp 方式）
+    └── website.py       # 学校官网抓取
 ```

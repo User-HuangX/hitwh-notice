@@ -79,6 +79,7 @@ cat > "$CONFIG_DIR/astrbot_plugin_hitwh_info_config.json" << EOF
   "token": "$EDU_TOKEN",
   "webvpn_base": "$EDU_BASE",
   "sync_interval_hours": 1,
+  "web_config_port": 8888,
   "embedding_api_base": "https://api.siliconflow.cn/v1",
   "embedding_api_key": "$EMB_KEY",
   "embedding_model": "$EMB_MODEL",

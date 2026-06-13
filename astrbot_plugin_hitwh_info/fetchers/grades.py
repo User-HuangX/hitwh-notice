@@ -29,43 +29,62 @@ async def fetch_grades(webvpn_base: str, cookie_str: str, timeout: int = 30) -> 
 async def _fetch_one_path(webvpn_base: str, cookie_str: str, path: str,
                           grade_type: str, timeout: int) -> list[dict[str, Any]]:
     _, browser, page = await setup_browser(webvpn_base, cookie_str)
-    all_rows: list[list[str]] = []
+    all_rows: list[dict[str, Any]] = []
     is_sxw = "Sxwcj" in path
     seen_keys: set[str] = set()
 
-    await page.goto(f"{webvpn_base}{path}", wait_until="networkidle", timeout=timeout * 1000)
-    await page.wait_for_selector("table tr td", state="attached", timeout=timeout * 1000)
+    try:
+        await page.goto(f"{webvpn_base}{path}", wait_until="networkidle", timeout=timeout * 1000)
+        await _wait_for_grade_table(page, timeout, grade_type, path)
 
-    await _extract_page(page, all_rows, seen_keys, is_sxw)
-    page_count = int(await page.evaluate(
-        "() => { const pc = document.getElementById('pageCount'); return pc ? pc.value : '1'; }"
-    ))
-    logger.info("grade_page type=%s page_count=%s", grade_type, page_count)
+        await _extract_page(page, all_rows, seen_keys, is_sxw)
+        page_count = int(await page.evaluate(
+            "() => { const pc = document.getElementById('pageCount'); return pc ? pc.value : '1'; }"
+        ))
+        logger.info("grade_page type=%s page_count=%s", grade_type, page_count)
 
-    current = 1
-    while current < page_count:
-        next_page = str(current + 1)
-        link = page.locator(f'a:has-text("{next_page}")')
-        if await link.count() == 0:
-            break
+        current = 1
+        while current < page_count:
+            next_page = str(current + 1)
+            link = page.locator(f'a:has-text("{next_page}")')
+            if await link.count() == 0:
+                break
+            try:
+                await page.evaluate(
+                    "() => { var o = document.getElementById('BOX_overlay'); if(o) o.style.display='none'; }")
+                await link.first.click(force=True)
+                await page.wait_for_timeout(3000)
+                await _wait_for_grade_table(page, timeout, grade_type, path)
+                await _extract_page(page, all_rows, seen_keys, is_sxw)
+                current += 1
+                logger.info("grade_page type=%s %s/%s total=%s", grade_type, current, page_count, len(all_rows))
+            except Exception:
+                logger.exception("grade_page_click_failed type=%s page=%s", grade_type, next_page)
+                current += 1
+        return all_rows
+    finally:
+        await browser.close()
+
+
+async def _wait_for_grade_table(page, timeout: int, grade_type: str, path: str) -> None:
+    try:
+        await page.wait_for_selector("table tr td", state="attached", timeout=timeout * 1000)
+    except Exception as e:
+        current_url = getattr(page, "url", "")
         try:
-            await page.evaluate(
-                "() => { var o = document.getElementById('BOX_overlay'); if(o) o.style.display='none'; }")
-            await link.first.click(force=True)
-            await page.wait_for_timeout(3000)
-            await page.wait_for_selector("table tr td", state="attached", timeout=timeout * 1000)
-            await _extract_page(page, all_rows, seen_keys, is_sxw)
-            current += 1
-            logger.info("grade_page type=%s %s/%s total=%s", grade_type, current, page_count, len(all_rows))
+            title = await page.title()
+            body_text = await page.locator("body").inner_text(timeout=1000)
         except Exception:
-            logger.exception("grade_page_click_failed type=%s page=%s", grade_type, next_page)
-            current += 1
+            title = ""
+            body_text = ""
+        logger.warning(
+            "grade_table_wait_timeout type=%s path=%s url=%s title=%s body=%s",
+            grade_type, path, current_url, title, body_text[:300],
+        )
+        raise RuntimeError("成绩页未加载出表格，可能 Cookie 失效、登录被重定向或教务系统暂时不可用，请重新捕获 Cookie 后再试") from e
 
-    await browser.close()
-    return all_rows
 
-
-async def _extract_page(page, all_rows: list, seen_keys: set, is_sxw: bool) -> None:
+async def _extract_page(page, all_rows: list[dict[str, Any]], seen_keys: set, is_sxw: bool) -> None:
     rows = await page.evaluate("""() => {
         const trs = document.querySelectorAll('table tr');
         return Array.from(trs).map(tr => {

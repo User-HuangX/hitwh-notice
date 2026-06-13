@@ -21,9 +21,10 @@ async def test_initialize_starts_web_config_with_sync_callbacks(monkeypatch):
     instances = []
 
     class FakeWebConfig:
-        def __init__(self, config, sync_callbacks=None):
+        def __init__(self, config, sync_callbacks=None, port=8888):
             self.config = config
             self.sync_callbacks = sync_callbacks or {}
+            self.port = port
             self.started = False
             instances.append(self)
 
@@ -40,6 +41,7 @@ async def test_initialize_starts_web_config_with_sync_callbacks(monkeypatch):
 
     assert len(instances) == 1
     assert instances[0].started is True
+    assert instances[0].port == 8888
     assert set(instances[0].sync_callbacks) == {"grades", "schedule", "exams", "plan", "index"}
 
 
@@ -47,7 +49,7 @@ async def test_terminate_stops_web_config(monkeypatch):
     instances = []
 
     class FakeWebConfig:
-        def __init__(self, config, sync_callbacks=None):
+        def __init__(self, config, sync_callbacks=None, port=8888):
             self.stopped = False
             instances.append(self)
 

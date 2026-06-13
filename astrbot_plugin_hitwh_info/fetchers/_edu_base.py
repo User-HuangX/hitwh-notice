@@ -13,8 +13,8 @@ async def setup_browser(webvpn_base: str, cookie_str: str):
     domain = urlparse(webvpn_base).hostname or "webvpn.hitwh.edu.cn"
 
     playwright = await pw.async_playwright().start()
-    browser = await playwright.chromium.launch(headless=True)
-    context = await browser.new_context()
+    browser = await playwright.chromium.launch(headless=True, args=["--ignore-certificate-errors"])
+    context = await browser.new_context(ignore_https_errors=True)
 
     for cookie_part in cookie_str.split("; "):
         if "=" in cookie_part:
