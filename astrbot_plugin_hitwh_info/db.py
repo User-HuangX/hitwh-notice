@@ -744,6 +744,7 @@ class HitwhDB:
         params: list[Any] = [vec, min_similarity, limit_val, query_text, rrf_k] + source_params
 
         rows = await conn.fetch(query, *params)
+        return [dict(row) for row in rows]
 
     @with_conn
     async def count_records(self, conn) -> dict[str, int]:

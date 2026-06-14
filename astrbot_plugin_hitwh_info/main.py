@@ -350,7 +350,7 @@ class HitwhInfoPlugin(Star):
             # 使用混合检索：dense + sparse RRF 融合
             try:
                 candidates = await self.db.search_hybrid(
-                    q_embedding, query, min_similarity=0.3, top_k=30,
+                    q_embedding, query, min_similarity=0.5, top_k=30,
                 )
             except Exception:
                 logger.warning("hybrid_search_failed, fallback to dense", exc_info=True)
@@ -530,7 +530,7 @@ class HitwhInfoPlugin(Star):
         self._log_rag_recall_start("tool_search", query, q_embedding)
         try:
             candidates = await self.db.search_hybrid(
-                q_embedding, query, min_similarity=0.3, top_k=30,
+                q_embedding, query, min_similarity=0.5, top_k=30,
             )
         except Exception:
             logger.warning("tool_hybrid_search_failed, fallback to dense", exc_info=True)
@@ -681,7 +681,7 @@ class HitwhInfoPlugin(Star):
             self._log_rag_recall_start("llm_context", msg, q_embedding)
             try:
                 candidates = await self.db.search_hybrid(
-                    q_embedding, msg, min_similarity=0.3, top_k=20,
+                    q_embedding, msg, min_similarity=0.5, top_k=20,
                 )
             except Exception:
                 logger.warning("llm_hybrid_search_failed, fallback to dense", exc_info=True)
