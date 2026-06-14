@@ -9,6 +9,14 @@ from ._utils import extract_msg, strip_command_prefix
 from .db import HitwhDB
 from .embedding import Embedder
 from .hierarchy import HierarchyMatcher
+from .post_process import (
+    apply_composite_scores,
+    compress_context,
+    deduplicate_by_content,
+    mmr_rerank,
+    source_type_weight,
+    time_decay_weight,
+)
 from .web_config import WebConfig, save_plugin_config
 
 try:
@@ -66,9 +74,26 @@ class HitwhInfoPlugin(Star):
             rerank_api_base=self.config.get("rerank_api_base", ""),
             rerank_api_key=self.config.get("rerank_api_key", ""),
             rerank_model=self.config.get("rerank_model", ""),
+            llm_provider=self._resolve_llm_provider(context),
         )
         self._tasks: list[asyncio.Task] = []
         self._web_config: WebConfig | None = None
+
+    @staticmethod
+    def _resolve_llm_provider(context: Any) -> Any | None:
+        """Resolve an LLM provider from the AstrBot context.
+
+        Tries several access patterns; returns None if unavailable.
+        """
+        for attr in ("llm_provider", "provider", "llm"):
+            p = getattr(context, attr, None)
+            if p is not None:
+                return p
+        try:
+            return context.get_provider()
+        except Exception:
+            pass
+        return None
 
     async def initialize(self) -> None:
         try:
@@ -318,16 +343,25 @@ class HitwhInfoPlugin(Star):
         try:
             q_embedding = await self._embedder.embed(query)
             self._log_rag_recall_start("cmd_search", query, q_embedding)
-            candidates = await self.db.search_chunks(q_embedding)
+            # 使用混合检索：dense + sparse RRF 融合
+            try:
+                candidates = await self.db.search_hybrid(
+                    q_embedding, query, min_similarity=0.3, top_k=30,
+                )
+            except Exception:
+                logger.warning("hybrid_search_failed, fallback to dense", exc_info=True)
+                candidates = await self.db.search_chunks(q_embedding, top_k=30)
             if not candidates:
                 self._log_rag_recall_empty("cmd_search", query, candidates)
                 yield event.plain_result("⚠️ 知识库为空或未找到相关结果"); return
             seen_docs: set[int] = set()
             unique = [c for c in candidates if c["document_id"] not in seen_docs and not seen_docs.add(c["document_id"])]
-            docs = [c.get("doc_content", c["content"]) for c in unique]
-            if len(docs) > 1:
-                reranked = await self._embedder.rerank(query, docs)
-                unique = [unique[r["index"]] for r in reranked if r["index"] < len(unique)]
+            # 内容去重
+            unique = deduplicate_by_content(unique)
+            # 复合得分：similarity × 时间衰减 × 来源权重
+            unique = apply_composite_scores(unique)
+            # MMR 多样性过滤
+            unique = mmr_rerank(q_embedding, unique, lambda_param=0.7, top_k=5)
             self._log_rag_recall_success("cmd_search", query, candidates, unique, len(unique))
             lines = [f"🔍 「{query}」相关结果："]
             for c in unique:
@@ -418,6 +452,10 @@ class HitwhInfoPlugin(Star):
                     content=text, source_type=source_type,
                     source_name=row.get("course_name", row.get("semester", "")),
                     chunks_data=chunk_data,
+                    metadata={
+                        "semester": row.get("semester", ""),
+                        "school_year": row.get("school_year", ""),
+                    },
                 )
                 total += 1
         return total
@@ -469,17 +507,32 @@ class HitwhInfoPlugin(Star):
         if self.db is None: return ""
         q_embedding = await self._embedder.embed(query)
         self._log_rag_recall_start("tool_search", query, q_embedding)
-        candidates = await self.db.search_chunks(q_embedding)
+        try:
+            candidates = await self.db.search_hybrid(
+                q_embedding, query, min_similarity=0.3, top_k=30,
+            )
+        except Exception:
+            logger.warning("tool_hybrid_search_failed, fallback to dense", exc_info=True)
+            candidates = await self.db.search_chunks(q_embedding, top_k=30)
         if not candidates:
             self._log_rag_recall_empty("tool_search", query, candidates)
             return ""
         seen: set[int] = set()
         unique = [c for c in candidates if c["document_id"] not in seen and not seen.add(c["document_id"])]
-        docs = [c.get("doc_content", c["content"]) for c in unique]
-        if len(docs) > 1:
-            reranked = await self._embedder.rerank(query, docs)
-            unique = [unique[r["index"]] for r in reranked if r["index"] < len(unique)]
+        # 内容去重
+        unique = deduplicate_by_content(unique)
+        # 复合得分：similarity × 时间衰减 × 来源权重
+        unique = apply_composite_scores(unique)
+        # MMR 多样性过滤
+        unique = mmr_rerank(q_embedding, unique, lambda_param=0.7, top_k=5)
         self._log_rag_recall_success("tool_search", query, candidates, unique, len(unique))
+        # LLM 上下文压缩
+        llm_provider = getattr(self.context, 'provider', None) or self.context
+        try:
+            compressed = await compress_context(query, unique, llm_provider=llm_provider, max_chars=600)
+            return compressed
+        except Exception:
+            pass
         return "\n".join(
             f"[{c['source_type']}] {c.get('doc_content', c['content'])[:200]}"
             for c in unique
@@ -605,15 +658,32 @@ class HitwhInfoPlugin(Star):
         try:
             q_embedding = await self._embedder.embed(msg)
             self._log_rag_recall_start("llm_context", msg, q_embedding)
-            candidates = await self.db.search_chunks(q_embedding)
+            try:
+                candidates = await self.db.search_hybrid(
+                    q_embedding, msg, min_similarity=0.3, top_k=20,
+                )
+            except Exception:
+                logger.warning("llm_hybrid_search_failed, fallback to dense", exc_info=True)
+                candidates = await self.db.search_chunks(q_embedding, top_k=20)
             if not candidates:
                 self._log_rag_recall_empty("llm_context", msg, candidates)
                 return
             seen: set[int] = set()
             unique = [c for c in candidates if c["document_id"] not in seen and not seen.add(c["document_id"])]
-            context = "\n".join(c.get("doc_content", c["content"])[:200] for c in unique[:8])
+            # 内容去重
+            unique = deduplicate_by_content(unique)
+            # 复合得分：similarity × 时间衰减 × 来源权重
+            unique = apply_composite_scores(unique)
+            # MMR 多样性过滤，保留 top 3
+            unique = mmr_rerank(q_embedding, unique, lambda_param=0.7, top_k=3)
+            # LLM 上下文压缩
+            llm_provider = getattr(self.context, 'provider', None) or self.context
+            try:
+                context = await compress_context(msg, unique, llm_provider=llm_provider, max_chars=500)
+            except Exception:
+                context = "\n".join(c.get("doc_content", c["content"])[:200] for c in unique)
             if context:
-                self._log_rag_recall_success("llm_context", msg, candidates, unique, min(len(unique), 8))
+                self._log_rag_recall_success("llm_context", msg, candidates, unique, min(len(unique), 3))
                 event.set_extra("hitwh_context", context)
         except Exception:
             pass

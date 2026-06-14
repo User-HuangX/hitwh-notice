@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
+    Column,
     ForeignKey,
     Index,
     String,
@@ -206,6 +207,11 @@ class Chunk(Base):
     chunk_index: Mapped[int] = mapped_column(default=0)
     content: Mapped[str] = mapped_column()
     embedding: Mapped[list[float]] = mapped_column(Vector(1024) if Vector else String(4096))
+    # 元数据向量: source_type(4) + semester(2) + hierarchy(1) = 7 维
+    metadata_vector: Mapped[list[float] | None] = mapped_column(
+        Vector(7) if Vector else String(128), nullable=True, default=None
+    )
+    # 全文搜索 tsvector 列 (在 create_all 之后通过 ALTER 添加)
     created_at: Mapped[datetime] = mapped_column(default=_now)
 
     document: Mapped["Document"] = relationship("Document", back_populates="chunks")
@@ -241,33 +247,27 @@ class HitwhDB:
 
     async def _get_pool(self):
         if self._pool is None:
-            dsn = self.dsn or "postgresql://postgres:postgres@localhost:5432/postgres"
+            dsn = self.dsn or "postgresql://postgres:***@localhost:5432/postgres"
             raw = dsn
             for prefix in ("postgresql+asyncpg://", "postgresql+psycopg://", "postgresql://"):
                 if raw.startswith(prefix):
-                    raw = raw[len(prefix):]
+                    dsn = raw
                     break
-            try:
-                from pgvector.asyncpg import register_vector
-            except ImportError:
-                register_vector = None
-
-            async def _init(conn):
-                if register_vector is not None:
-                    await register_vector(conn)
-
-            self._pool = await asyncpg.create_pool(
-                f"postgresql://{raw}", min_size=1, max_size=5, init=_init
-            )
+            else:
+                dsn = "postgresql+asyncpg://" + raw
+            if not dsn.startswith("postgresql+asyncpg"):
+                if dsn.startswith("postgresql://"):
+                    dsn = "postgresql+asyncpg://" + dsn[len("postgresql://"):]
+                elif dsn.startswith("postgresql+psycopg"):
+                    dsn = dsn.replace("postgresql+psycopg", "postgresql+asyncpg")
+            self._pool = asyncpg.create_pool(dsn=dsn, min_size=1, max_size=10)
+            self._pool_dsn = dsn
+            logger.info("db_pool_created")
         return self._pool
 
     async def _ensure_engine(self):
         if self._engine is None:
-            if not _asyncpg_available:
-                raise RuntimeError("asyncpg is required for database operations")
-            dsn = self.dsn or self.connect_kwargs.pop("dsn", "")
-            if not dsn:
-                dsn = "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres"
+            dsn = self.dsn or "postgresql://postgres:***@localhost:5432/postgres"
             if not dsn.startswith("postgresql+asyncpg"):
                 if dsn.startswith("postgresql://"):
                     dsn = "postgresql+asyncpg://" + dsn[len("postgresql://"):]
@@ -286,7 +286,27 @@ class HitwhDB:
         await self._ensure_engine()
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        # 为 hitwh_chunks 添加 tsvector 列和 GIN 索引（如果不存在）
+        await self._ensure_tsvector_column()
         logger.info("db_schema_ready")
+
+    async def _ensure_tsvector_column(self) -> None:
+        """确保 hitwh_chunks 表有 content_tsv 列和 GIN 索引。"""
+        try:
+            async with self._engine.begin() as conn:
+                # 添加 tsvector 生成列
+                await conn.execute(text(
+                    "ALTER TABLE hitwh_chunks ADD COLUMN IF NOT EXISTS content_tsv tsvector "
+                    "GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED"
+                ))
+                # 创建 GIN 索引
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_chunk_content_tsv "
+                    "ON hitwh_chunks USING GIN (content_tsv)"
+                ))
+            logger.info("tsvector_column_and_index_ready")
+        except Exception:
+            logger.exception("tsvector_setup_failed (may already exist)")
 
     # ======== hierarchy ========
 
@@ -574,7 +594,18 @@ class HitwhDB:
     # ======== documents & chunks ========
 
     async def upsert_document(self, title: str, content: str, source_type: str,
-                              source_name: str, chunks_data: list[dict[str, Any]]) -> int:
+                              source_name: str, chunks_data: list[dict[str, Any]],
+                              metadata: dict[str, Any] | None = None) -> int:
+        """插入或更新文档及其分块。
+
+        Args:
+            title: 文档标题
+            content: 文档全文
+            source_type: 来源类型
+            source_name: 来源名称
+            chunks_data: 分块数据列表 [{"content": str, "embedding": list[float]}, ...]
+            metadata: 可选的元数据，包含 semester, hierarchy_level 等
+        """
         if not chunks_data:
             return 0
         async with await self._session() as session, session.begin():
@@ -584,11 +615,11 @@ class HitwhDB:
                 select(func.md5(Chunk.content)).where(func.md5(Chunk.content).in_(hashes))
             )
             existing = {row[0] for row in rows.all()}
-            
+
             new_chunks = [(i, cd) for i, cd in enumerate(chunks_data) if hashes[i] not in existing]
             if not new_chunks:
                 return 0
-            
+
             doc = Document(
                 title=title, content=content,
                 source_type=source_type, source_name=source_name,
@@ -596,28 +627,153 @@ class HitwhDB:
             )
             session.add(doc)
             await session.flush()
-            
+
+            # 为每个 chunk 计算 metadata_vector
+            meta = metadata or {}
+            meta["source_type"] = meta.get("source_type", source_type)
+            from .embedding import Embedder
             for i, cd in new_chunks:
+                chunk_meta = {**meta}
+                chunk_meta["content"] = cd["content"]
+                meta_vec = Embedder.encode_metadata(
+                    source_type=str(chunk_meta.get("source_type", source_type)),
+                    semester=str(chunk_meta.get("semester", "")),
+                    hierarchy_level=str(chunk_meta.get("hierarchy_level", "")),
+                )
                 session.add(Chunk(
                     document_id=doc.id, chunk_index=i,
                     content=cd["content"], embedding=cd.get("embedding", []),
+                    metadata_vector=meta_vec if meta_vec else None,
                 ))
             logger.info("doc_upserted id=%s title=%s chunks=%s", doc.id, title[:40], len(new_chunks))
             return doc.id
 
     @with_conn
-    async def search_chunks(self, conn, embedding: list[float], min_similarity: float = 0.3) -> list[dict[str, Any]]:
+    async def search_chunks(
+        self, conn,
+        embedding: list[float],
+        min_similarity: float = 0.3,
+        source_types: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[dict[str, Any]]:
+        """向量相似度搜索，支持 per-source 预过滤和 Top-K 控制。
+
+        Args:
+            conn: asyncpg 连接
+            embedding: 查询嵌入向量 (1024 维)
+            min_similarity: 最小余弦相似度阈值
+            source_types: 可选，限制搜索的 source_type 列表
+            top_k: 最大返回候选数量
+
+        Returns:
+            搜索结果列表，每项包含 chunk 和 document 字段
+        """
         vec = RawVector(embedding) if RawVector else embedding
-        rows = await conn.fetch(
-            """SELECT c.id, c.content, c.document_id, c.chunk_index,
-                      d.title, d.content AS doc_content, d.source_type, d.source_name,
-                      1 - (c.embedding <=> $1) AS similarity
-               FROM hitwh_chunks c
-               JOIN hitwh_documents d ON c.document_id = d.id
-               WHERE 1 - (c.embedding <=> $1) > $2
-               ORDER BY c.embedding <=> $1""",
-            vec, min_similarity,
-        )
+        source_filter = ""
+        params: list[Any] = [vec, min_similarity]
+
+        if source_types:
+            placeholders = ", ".join(f"${i + 3}" for i in range(len(source_types)))
+            source_filter = f"AND d.source_type IN ({placeholders})"
+            params.extend(source_types)
+
+        params.append(top_k)
+
+        query = f"""
+            SELECT c.id, c.content, c.document_id, c.chunk_index, c.embedding,
+                   d.title, d.content AS doc_content, d.source_type, d.source_name, d.created_at,
+                   1 - (c.embedding <=> $1) AS similarity
+            FROM hitwh_chunks c
+            JOIN hitwh_documents d ON c.document_id = d.id
+            WHERE 1 - (c.embedding <=> $1) > $2
+            {source_filter}
+            ORDER BY c.embedding <=> $1
+            LIMIT ${len(params)}
+        """
+        rows = await conn.fetch(query, *params)
+        return [dict(row) for row in rows]
+
+    @with_conn
+    async def search_hybrid(
+        self, conn,
+        embedding: list[float],
+        query_text: str,
+        min_similarity: float = 0.3,
+        source_types: list[str] | None = None,
+        top_k: int = 50,
+        rrf_k: int = 60,
+    ) -> list[dict[str, Any]]:
+        """混合检索：dense (向量) + sparse (全文搜索) 使用 RRF 融合。
+
+        Args:
+            conn: asyncpg 连接
+            embedding: 查询嵌入向量 (1024 维)
+            query_text: 查询文本（用于全文搜索）
+            min_similarity: 最小向量余弦相似度阈值
+            source_types: 可选，限制搜索的 source_type 列表
+            top_k: 最大返回候选数量
+            rrf_k: RRF 融合参数 k (默认 60)
+
+        Returns:
+            按 RRF 分数降序排列的搜索结果列表
+        """
+        vec = RawVector(embedding) if RawVector else embedding
+
+        source_where = ""
+        source_params: list[Any] = []
+        if source_types:
+            placeholders = ", ".join(f"${i + 5}" for i in range(len(source_types)))
+            source_where = f"AND d.source_type IN ({placeholders})"
+            source_params = list(source_types)
+
+        # RRF 融合查询：
+        # 1) dense_ranked: 向量余弦距离排序（top_k * 2 候选）
+        # 2) sparse_ranked: ts_rank 排序（top_k * 2 候选）
+        # 3) 合并后用 RRF 公式重排
+        query = f"""
+            WITH dense_ranked AS (
+                SELECT c.id, c.content, c.document_id, c.chunk_index, c.embedding,
+                       d.title, d.content AS doc_content, d.source_type, d.source_name, d.created_at,
+                       1 - (c.embedding <=> $1) AS similarity,
+                       ROW_NUMBER() OVER (ORDER BY c.embedding <=> $1) AS dense_rank
+                FROM hitwh_chunks c
+                JOIN hitwh_documents d ON c.document_id = d.id
+                WHERE 1 - (c.embedding <=> $1) > $2
+                {source_where}
+                ORDER BY c.embedding <=> $1
+                LIMIT $3
+            ),
+            sparse_ranked AS (
+                SELECT c.id,
+                       ts_rank(c.content_tsv, plainto_tsquery('simple', $4)) AS ts_score,
+                       ROW_NUMBER() OVER (ORDER BY ts_rank(c.content_tsv, plainto_tsquery('simple', $4)) DESC) AS sparse_rank
+                FROM hitwh_chunks c
+                JOIN hitwh_documents d ON c.document_id = d.id
+                WHERE c.content_tsv @@ plainto_tsquery('simple', $4)
+                {source_where}
+                ORDER BY ts_rank(c.content_tsv, plainto_tsquery('simple', $4)) DESC
+                LIMIT $3
+            ),
+            rrf_fused AS (
+                SELECT dr.*,
+                       COALESCE(sr.ts_score, 0) AS ts_score,
+                       COALESCE(sr.sparse_rank, $3 + 1) AS sparse_rank,
+                       (1.0 / ($5 + dr.dense_rank)) + (1.0 / ($5 + COALESCE(sr.sparse_rank, $3 + 1))) AS rrf_score
+                FROM dense_ranked dr
+                LEFT JOIN sparse_ranked sr ON dr.id = sr.id
+            )
+            SELECT id, content, document_id, chunk_index,
+                   title, doc_content, source_type, source_name,
+                   similarity, ts_score, rrf_score, embedding, created_at
+            FROM rrf_fused
+            ORDER BY rrf_score DESC
+            LIMIT $3
+        """
+
+        limit_val = top_k * 2  # 每路取 2 倍候选
+        params: list[Any] = [vec, min_similarity, limit_val, query_text, rrf_k] + source_params
+
+        rows = await conn.fetch(query, *params)
         return [dict(row) for row in rows]
 
     @with_conn
